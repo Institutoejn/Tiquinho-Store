@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ShoppingCart, 
@@ -157,7 +156,8 @@ export default function App() {
   
   // FUNCIONALIDADE: Alteração de Favicon Dinâmico
   useEffect(() => {
-    const faviconUrl = 'https://imgur.com/tkJIUNC';
+    // Usando link direto i.imgur.com para garantir que o navegador reconheça como imagem
+    const faviconUrl = 'https://i.imgur.com/tkJIUNC.png';
     let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
     
     if (link) {
@@ -165,6 +165,7 @@ export default function App() {
     } else {
       link = document.createElement('link');
       link.rel = 'icon';
+      link.type = 'image/png';
       link.href = faviconUrl;
       document.head.appendChild(link);
     }
