@@ -155,6 +155,21 @@ export default function App() {
   const [isPixModalOpen, setIsPixModalOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   
+  // FUNCIONALIDADE: Alteração de Favicon Dinâmico
+  useEffect(() => {
+    const faviconUrl = 'https://imgur.com/tkJIUNC';
+    let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
+    
+    if (link) {
+      link.href = faviconUrl;
+    } else {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      link.href = faviconUrl;
+      document.head.appendChild(link);
+    }
+  }, []);
+
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('tiquinho_products');
     const base = saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
