@@ -759,9 +759,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setIsNotificationsOpen(true)} className="relative p-3 text-zinc-400 hover:text-white bg-zinc-900/50 rounded-2xl border border-white/5">
+            <motion.button 
+              whileTap={{ scale: 0.9 }} 
+              onClick={() => setIsNotificationsOpen(true)} 
+              className="relative p-3 text-zinc-400 hover:text-white bg-zinc-900/50 rounded-2xl border border-white/5 transition-all"
+            >
               <Bell size={20} strokeWidth={2.5} />
-              {userNotifications.length > 0 && <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-rose-600 rounded-full border-2 border-[#09090b] shadow-xl" />}
+              {userNotifications.length > 0 && (
+                <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-rose-600 rounded-full border-2 border-[#09090b] shadow-xl" />
+              )}
             </motion.button>
             
             <div className="bg-zinc-900/50 border border-white/5 px-5 py-2.5 rounded-2xl hidden md:flex items-center gap-3 text-xs font-bold text-white/80">
@@ -805,6 +811,51 @@ export default function App() {
         <MessageCircle size={32} strokeWidth={2.5} />
       </motion.button>
 
+      {/* Painel de Notificações */}
+      <AnimatePresence>
+        {isNotificationsOpen && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm" onClick={() => setIsNotificationsOpen(false)} />
+            <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 25 }} className="fixed right-4 top-4 bottom-4 z-[110] w-full max-w-md glass rounded-[40px] shadow-3xl flex flex-col border border-white/10 overflow-hidden">
+              <div className="p-8 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-rose-600/10 rounded-2xl"><Bell className="text-rose-600" size={24} strokeWidth={3} /></div>
+                  <h2 className="text-2xl font-black text-white tracking-tighter uppercase">Notificações</h2>
+                </div>
+                <button onClick={() => setIsNotificationsOpen(false)} className="p-2 text-zinc-500 hover:text-white transition-colors"><X size={24} /></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                {userNotifications.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center px-6">
+                    <div className="w-20 h-20 bg-rose-600/5 rounded-full flex items-center justify-center mb-6 border border-rose-600/10">
+                      <CheckCircle2 size={40} className="text-rose-500 opacity-40" />
+                    </div>
+                    <p className="text-white font-bold text-lg mb-2">Você está em dia!</p>
+                    <p className="text-zinc-500 text-sm font-medium">Nenhuma nova notificação para sua rede.</p>
+                  </div>
+                ) : userNotifications.map(notif => (
+                  <div key={notif.id} className="p-6 bg-zinc-950/40 rounded-[32px] border border-white/5 relative group">
+                    <div className="absolute top-6 right-6 w-2 h-2 bg-rose-600 rounded-full" />
+                    <p className="text-sm font-bold text-white mb-2 leading-tight pr-4">{notif.message}</p>
+                    <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest">{new Date(notif.createdAt).toLocaleDateString()}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-8 border-t border-white/5">
+                <button 
+                  onClick={() => setIsNotificationsOpen(false)}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest transition-all border border-white/5"
+                >
+                  Fechar Painel
+                </button>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Drawer Carrinho */}
       <AnimatePresence>
         {isCartOpen && (
@@ -814,7 +865,7 @@ export default function App() {
               <div className="p-8 border-b border-white/5 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-rose-600/10 rounded-2xl"><ShoppingCart className="text-rose-600" size={24} strokeWidth={3} /></div>
-                  <h2 className="text-2xl font-black text-white tracking-tighter">Minha Lista</h2>
+                  <h2 className="text-2xl font-black text-white tracking-tighter uppercase">Minha Lista</h2>
                 </div>
                 <button onClick={() => setIsCartOpen(false)} className="p-2 text-zinc-500 hover:text-white transition-colors"><X size={24} /></button>
               </div>
