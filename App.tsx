@@ -154,8 +154,11 @@ export default function App() {
   const [isPixModalOpen, setIsPixModalOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   
-  // FUNCIONALIDADE: Alteração de Favicon Dinâmico
+  // FUNCIONALIDADE: Alteração de Favicon Dinâmico e Título da Aba
   useEffect(() => {
+    // Definindo o título da aba do navegador
+    document.title = "TIQUINHO STORE";
+
     // Usando link direto i.imgur.com para garantir que o navegador reconheça como imagem
     const faviconUrl = 'https://i.imgur.com/tkJIUNC.png';
     let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
@@ -850,7 +853,7 @@ export default function App() {
         {isNotificationsOpen && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm" onClick={() => setIsNotificationsOpen(false)} />
-            <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 25 }} className="fixed right-4 top-4 bottom-4 z-[110] w-full max-w-md glass rounded-[40px] shadow-3xl flex flex-col border border-white/10 overflow-hidden">
+            <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 25 }} className="fixed right-4 top-4 bottom-4 z-[110] w-full max-md glass rounded-[40px] shadow-3xl flex flex-col border border-white/10 overflow-hidden">
               <div className="p-8 border-b border-white/5 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-rose-600/10 rounded-2xl"><Bell className="text-rose-600" size={24} strokeWidth={3} /></div>
