@@ -25,7 +25,9 @@ import {
   Settings, 
   MessageCircle, 
   QrCode, 
-  Clock 
+  Clock,
+  ClipboardList,
+  Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { USERS, INITIAL_PRODUCTS } from './constants';
@@ -50,7 +52,7 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
       initial={{ opacity: 0, y: 50, scale: 0.9 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
-      className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-6 py-4 rounded-3xl shadow-2xl glass transition-all border-white/10 ${
+      className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-[150] flex items-center gap-3 px-6 py-4 rounded-3xl shadow-2xl glass transition-all border-white/10 ${
         type === 'success' ? 'text-white' : 'bg-rose-600/90 text-white'
       }`}
     >
@@ -149,6 +151,7 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
   const [isPixModalOpen, setIsPixModalOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   
@@ -233,6 +236,11 @@ export default function App() {
     return notifications.filter(n => n.networkTag === currentUser.networkTag || n.networkTag === 'generica');
   }, [currentUser, notifications]);
 
+  const userOrders = useMemo(() => {
+    if (!currentUser) return [];
+    return orders.filter(o => o.unitName === currentUser.unitName && o.networkName === currentUser.networkName);
+  }, [currentUser, orders]);
+
   const cartTotal = useMemo(() => {
     return cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   }, [cart]);
@@ -258,6 +266,7 @@ export default function App() {
     setIsCartOpen(false);
     setIsNotificationsOpen(false);
     setIsPixModalOpen(false);
+    setIsOrdersModalOpen(false);
     setLoginEmail('');
     setLoginPassword('');
   };
@@ -769,8 +778,17 @@ export default function App() {
                 <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-rose-600 rounded-full border-2 border-[#09090b] shadow-xl" />
               )}
             </motion.button>
+
+            <motion.button 
+              whileTap={{ scale: 0.9 }} 
+              onClick={() => setIsOrdersModalOpen(true)} 
+              className="relative p-3 text-zinc-400 hover:text-white bg-zinc-900/50 rounded-2xl border border-white/5 transition-all flex items-center gap-2 group"
+            >
+              <ClipboardList size={20} strokeWidth={2.5} />
+              <span className="hidden lg:block text-[10px] font-black uppercase tracking-widest">Meus Pedidos</span>
+            </motion.button>
             
-            <div className="bg-zinc-900/50 border border-white/5 px-5 py-2.5 rounded-2xl hidden md:flex items-center gap-3 text-xs font-bold text-white/80">
+            <div className="bg-zinc-900/50 border border-white/5 px-5 py-2.5 rounded-2xl hidden xl:flex items-center gap-3 text-xs font-bold text-white/80">
               <div className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
               {currentUser.networkName} <span className="text-zinc-600 mx-1">/</span> {currentUser.unitName}
             </div>
@@ -849,6 +867,81 @@ export default function App() {
                   className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest transition-all border border-white/5"
                 >
                   Fechar Painel
+                </button>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Histórico de Pedidos Cliente */}
+      <AnimatePresence>
+        {isOrdersModalOpen && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm" onClick={() => setIsOrdersModalOpen(false)} />
+            <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 25 }} className="fixed right-4 top-4 bottom-4 z-[110] w-full max-w-lg glass rounded-[40px] shadow-3xl flex flex-col border border-white/10 overflow-hidden">
+              <div className="p-8 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-rose-600/10 rounded-2xl"><ClipboardList className="text-rose-600" size={24} strokeWidth={3} /></div>
+                  <h2 className="text-2xl font-black text-white tracking-tighter uppercase">Meu Histórico</h2>
+                </div>
+                <button onClick={() => setIsOrdersModalOpen(false)} className="p-2 text-zinc-500 hover:text-white transition-colors"><X size={24} /></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                {userOrders.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center px-6">
+                    <div className="w-20 h-20 bg-zinc-900/50 rounded-full flex items-center justify-center mb-6 border border-white/5">
+                      <Package size={40} className="text-zinc-600 opacity-40" />
+                    </div>
+                    <p className="text-white font-bold text-lg mb-2">Nenhum pedido ainda</p>
+                    <p className="text-zinc-500 text-sm font-medium">Você ainda não realizou nenhum pedido em nossa plataforma.</p>
+                  </div>
+                ) : userOrders.map(order => (
+                  <div key={order.id} className="p-6 bg-zinc-950/40 rounded-[32px] border border-white/5 space-y-4">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                      <div>
+                        <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mb-1">Pedido ID</p>
+                        <p className="text-xs font-bold text-white">#{order.id.split('-')[1]}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mb-1">Realizado em</p>
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-300">
+                          <Calendar size={12} className="text-rose-600" />
+                          {new Date(order.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {order.items.map((item, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-3">
+                            <span className="w-6 h-6 flex items-center justify-center bg-zinc-900 rounded-lg text-[10px] font-black text-zinc-400 border border-white/5">{item.quantity}x</span>
+                            <span className="text-zinc-200 font-medium">{item.name} <span className="text-zinc-500 font-black">({item.selectedSize})</span></span>
+                          </div>
+                          <span className="text-zinc-500 font-bold">R$ {(item.price * item.quantity).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                      <div className="bg-green-500/10 border border-green-500/20 px-3 py-1.5 rounded-full flex items-center gap-1.5">
+                        <CheckCircle2 size={12} className="text-green-500" />
+                        <span className="text-[9px] font-black text-green-500 uppercase tracking-widest">{order.status}</span>
+                      </div>
+                      <p className="text-xl font-black text-rose-500">R$ {order.total.toFixed(2)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-8 border-t border-white/5">
+                <button 
+                  onClick={() => setIsOrdersModalOpen(false)}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest transition-all border border-white/5"
+                >
+                  Continuar Comprando
                 </button>
               </div>
             </motion.aside>
