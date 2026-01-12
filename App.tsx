@@ -58,22 +58,48 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Sincronização automática quando o usuário muda
   useEffect(() => {
     const saved = localStorage.getItem('tiquinho_session');
-    if (saved) setCurrentUser(JSON.parse(saved));
-    fetchInitialData();
+    if (saved) {
+      const user = JSON.parse(saved);
+      setCurrentUser(user);
+    }
   }, []);
 
+  useEffect(() => {
+    if (currentUser) {
+      fetchInitialData();
+    }
+  }, [currentUser]);
+
   const fetchInitialData = async () => {
+    if (!currentUser) return;
     setIsLoading(true);
     try {
-      const { data: prods } = await supabase.from('products').select('*').order('name');
-      if (prods) setProducts(prods);
+      // Sincronia de Rede (Tag)
+      let query = supabase.from('products').select('*');
       
-      const { data: ords } = await supabase.from('orders').select('*');
-      if (ords) setOrders(ords);
-    } catch (err) { console.error('Data error:', err); }
-    finally { setIsLoading(false); }
+      if (currentUser.role === 'admin') {
+        // Gestor vê tudo
+        const { data: prods } = await query.order('name');
+        if (prods) setProducts(prods);
+        
+        const { data: ords } = await supabase.from('orders').select('*');
+        if (ords) setOrders(ords);
+      } else {
+        // Franqueado vê apenas sua rede + genérica (Normalizado)
+        const userTag = currentUser.network_tag.toLowerCase().trim();
+        const { data: prods } = await query
+          .or(`network_tag.eq.${userTag},network_tag.eq.generica`)
+          .order('name');
+        if (prods) setProducts(prods);
+      }
+    } catch (err) { 
+      console.error('Data error:', err); 
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
@@ -82,11 +108,17 @@ export default function App() {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.from('users').select('*').eq('email', formData.email).eq('password', formData.password).single();
+      const { data, error } = await supabase.from('users').select('*').eq('email', formData.email.toLowerCase().trim()).eq('password', formData.password).single();
       if (error || !data) throw new Error('Acesso negado.');
-      setCurrentUser(data);
-      localStorage.setItem('tiquinho_session', JSON.stringify(data));
-      showToast(`Bem-vindo, ${data.unit_name}!`);
+      
+      const sessionUser: UserType = {
+        ...data,
+        network_tag: data.network_tag.toLowerCase().trim()
+      };
+
+      setCurrentUser(sessionUser);
+      localStorage.setItem('tiquinho_session', JSON.stringify(sessionUser));
+      showToast(`Bem-vindo, ${sessionUser.unit_name}!`);
     } catch (err: any) { showToast(err.message, 'error'); }
     finally { setIsLoading(false); }
   };
@@ -100,31 +132,56 @@ export default function App() {
       return;
     }
     try {
+      const normalizedTag = formData.role === 'admin' ? 'admin' : formData.network_tag.toLowerCase().trim();
       const newUser = { 
-        email: formData.email, password: formData.password, unit_name: formData.unit_name, 
-        network_tag: formData.role === 'admin' ? 'admin' : formData.network_tag, role: formData.role 
+        email: formData.email.toLowerCase().trim(), 
+        password: formData.password, 
+        unit_name: formData.unit_name, 
+        network_tag: normalizedTag, 
+        role: formData.role 
       };
       const { data, error } = await supabase.from('users').insert([newUser]).select().single();
       if (error) throw error;
-      setCurrentUser(data);
-      localStorage.setItem('tiquinho_session', JSON.stringify(data));
+      
+      const sessionUser = {
+        ...data,
+        network_tag: normalizedTag
+      };
+
+      setCurrentUser(sessionUser);
+      localStorage.setItem('tiquinho_session', JSON.stringify(sessionUser));
     } catch (err: any) { showToast("Erro no cadastro", "error"); }
     finally { setIsLoading(false); }
   };
 
-  const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('tiquinho_session'); };
+  const handleLogout = () => { 
+    setCurrentUser(null); 
+    setProducts([]);
+    setOrders([]);
+    localStorage.removeItem('tiquinho_session'); 
+  };
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    
+    // Normalização: Transforma a tag em minúscula antes de salvar
+    const normalizedNetworkTag = newProduct.network_tag.toLowerCase().trim();
+    
     const payload = {
-      name: newProduct.name, price: parseFloat(newProduct.price), image_url: newProduct.image_url,
-      network_tag: newProduct.network_tag, category: newProduct.category,
-      min_order: parseInt(newProduct.min_order), production_days: parseInt(newProduct.production_days)
+      name: newProduct.name, 
+      price: parseFloat(newProduct.price), 
+      image_url: newProduct.image_url,
+      network_tag: normalizedNetworkTag, 
+      category: newProduct.category,
+      min_order: parseInt(newProduct.min_order), 
+      production_days: parseInt(newProduct.production_days)
     };
+    
     try {
       if (editingId) await supabase.from('products').update(payload).eq('id', editingId);
       else await supabase.from('products').insert([payload]);
+      
       showToast("Sucesso!");
       fetchInitialData();
       setEditingId(null);
@@ -168,6 +225,13 @@ export default function App() {
               )}
               <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
               <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+              {isSigningUp && formData.role === 'user' && (
+                <select value={formData.network_tag} onChange={e => setFormData({...formData, network_tag: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm appearance-none">
+                  <option value="drogaria-total">Drogaria Total</option>
+                  <option value="farmacia-abc">Farmácia ABC</option>
+                  <option value="generica">Rede Independente</option>
+                </select>
+              )}
               <button type="submit" className="w-full bg-[#E11D48] text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-rose-600/20">{isSigningUp ? 'Finalizar' : 'Entrar'}</button>
             </form>
             <button onClick={() => setIsSigningUp(!isSigningUp)} className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors">{isSigningUp ? 'Voltar' : 'Criar Conta'}</button>
@@ -185,7 +249,7 @@ export default function App() {
         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
         
         <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between border-b border-white/5">
-          <div className="flex items-center gap-3"><Logo className="w-10 h-10" /><h2 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Dashboard de Gestão</h2></div>
+          <div className="flex items-center gap-3"><Logo className="w-10 h-10" /><h2 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Painel de Gestão</h2></div>
           <button onClick={handleLogout} className="p-3 bg-zinc-800 rounded-2xl text-zinc-400 hover:text-[#E11D48]"><LogOut size={20} /></button>
         </header>
 
@@ -218,7 +282,7 @@ export default function App() {
                   <option value="farmacia-abc">Farmácia ABC</option>
                   <option value="generica">Uso Geral</option>
                 </select>
-                <input type="number" placeholder="Mínimo de Peças" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+                <input type="number" placeholder="Mínimo de Peças (Min 10)" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
                 <input type="number" placeholder="Prazo de Produção (Dias)" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
               </div>
               <div onClick={() => fileInputRef.current?.click()} className="min-h-[200px] bg-zinc-950 border-2 border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 transition-all overflow-hidden relative">
@@ -229,17 +293,21 @@ export default function App() {
             </form>
           </section>
 
-          {/* SEÇÃO 3: LISTAGEM DE INVENTÁRIO */}
+          {/* SEÇÃO 3: LISTAGEM DE INVENTÁRIO (TOTAL) */}
           <section className="space-y-6">
-            <h2 className="text-xl font-black uppercase tracking-tighter">Itens no Catálogo</h2>
+            <h2 className="text-xl font-black uppercase tracking-tighter">Catálogo Global (Sincronizado)</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
               {products.map(p => (
                 <div key={p.id} className="bg-zinc-900/40 p-4 rounded-[32px] flex flex-col gap-3 group border border-white/5">
                   <div className="aspect-square rounded-2xl overflow-hidden bg-zinc-950"><img src={p.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt="" /></div>
-                  <div><h4 className="text-[10px] font-bold text-zinc-300 truncate">{p.name}</h4><p className="text-xs font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</p></div>
+                  <div>
+                    <h4 className="text-[10px] font-bold text-zinc-300 truncate">{p.name}</h4>
+                    <p className="text-[9px] text-zinc-500 uppercase font-black">{p.network_tag}</p>
+                    <p className="text-xs font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</p>
+                  </div>
                   <div className="flex gap-2">
                     <button onClick={() => { setEditingId(p.id); setNewProduct({ ...p, price: p.price.toString(), min_order: p.min_order.toString(), production_days: p.production_days.toString() }); window.scrollTo({ top: 300, behavior: 'smooth' }); }} className="flex-1 bg-zinc-800 py-2 rounded-xl text-[9px] uppercase font-black hover:bg-zinc-700">Editar</button>
-                    <button onClick={async () => { if(confirm("Remover?")) { setIsLoading(true); await supabase.from('products').delete().eq('id', p.id); fetchInitialData(); } }} className="p-2 bg-rose-600/10 text-rose-500 rounded-xl hover:bg-rose-600 hover:text-white"><Trash2 size={14}/></button>
+                    <button onClick={async () => { if(confirm("Remover do banco de dados?")) { setIsLoading(true); await supabase.from('products').delete().eq('id', p.id); fetchInitialData(); } }} className="p-2 bg-rose-600/10 text-rose-500 rounded-xl hover:bg-rose-600 hover:text-white"><Trash2 size={14}/></button>
                   </div>
                 </div>
               ))}
@@ -263,45 +331,60 @@ export default function App() {
       </header>
       <main className="max-w-7xl mx-auto px-6 py-12">
         <h1 className="text-4xl font-black mb-1 tracking-tighter uppercase">{currentUser.unit_name}</h1>
-        <p className="text-zinc-500 mb-12 font-black uppercase tracking-widest text-[10px]">Rede: {currentUser.network_tag.replace('-', ' ')}</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-          {products.filter(p => p.network_tag === currentUser.network_tag || p.network_tag === 'generica').map(p => (
-            <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group max-w-sm mx-auto w-full">
-              <div className="aspect-square bg-zinc-950 overflow-hidden"><img src={p.image_url} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-700" alt="" /></div>
-              <div className="p-6 flex-1 flex flex-col">
-                <h3 className="text-base font-bold text-white mb-1 line-clamp-1">{p.name}</h3>
-                <p className="text-xl font-black text-white/90">R$ {p.price.toFixed(2)}</p>
-                <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase"><Hourglass size={12} className="text-[#E11D48]" /> {p.production_days} dias</div>
-                <button onClick={() => { setCart([...cart, { ...p, selectedSize: 'M', quantity: p.min_order }]); showToast("Adicionado!"); }} className="mt-6 w-full font-black py-4 rounded-2xl bg-white text-zinc-950 uppercase text-[10px] tracking-widest">Adicionar ({p.min_order} un)</button>
-              </div>
-            </div>
-          ))}
+        <div className="flex items-center gap-2 mb-12">
+          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+          <p className="text-zinc-500 font-black uppercase tracking-widest text-[10px]">Filtrado: {currentUser.network_tag.replace('-', ' ')}</p>
         </div>
+        
+        {products.length === 0 ? (
+          <div className="py-20 text-center glass rounded-[40px]">
+            <Package className="mx-auto mb-4 text-zinc-800" size={48} />
+            <p className="text-zinc-600 font-black uppercase text-xs">Nenhum uniforme disponível para sua rede no momento.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            {products.map(p => (
+              <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group max-w-sm mx-auto w-full shadow-2xl">
+                <div className="aspect-square bg-zinc-950 overflow-hidden"><img src={p.image_url} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-700 opacity-90 group-hover:opacity-100" alt="" /></div>
+                <div className="p-6 flex-1 flex flex-col">
+                  <h3 className="text-base font-bold text-white mb-1 line-clamp-1">{p.name}</h3>
+                  <p className="text-xl font-black text-white/90">R$ {p.price.toFixed(2)}</p>
+                  <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase"><Hourglass size={12} className="text-[#E11D48]" /> Prazo: {p.production_days} dias</div>
+                  <button onClick={() => { setCart([...cart, { ...p, selectedSize: 'M', quantity: p.min_order }]); showToast("Adicionado!"); }} className="mt-6 w-full font-black py-4 rounded-2xl bg-white text-zinc-950 uppercase text-[10px] tracking-widest hover:bg-zinc-200 transition-all">Adicionar ({p.min_order} un)</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
-      <button onClick={() => window.open(`https://wa.me/5517992198086`, '_blank')} className="fixed bottom-8 right-8 w-16 h-16 bg-zinc-900 border border-white/10 text-emerald-500 rounded-full shadow-2xl flex items-center justify-center z-[90]"><MessageCircle size={32} /></button>
+      <button onClick={() => window.open(`https://wa.me/5517992198086`, '_blank')} className="fixed bottom-8 right-8 w-16 h-16 bg-zinc-900 border border-white/10 text-emerald-500 rounded-full shadow-2xl flex items-center justify-center z-[90] hover:scale-110 transition-transform"><MessageCircle size={32} /></button>
       <AnimatePresence>
         {isCartOpen && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm" onClick={() => setIsCartOpen(false)} />
             <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} className="fixed right-0 top-0 bottom-0 z-[110] w-full max-w-md glass flex flex-col border-l border-white/10">
-              <div className="p-8 border-b border-white/5 flex items-center justify-between"><h2 className="text-2xl font-black uppercase tracking-tighter">Carrinho</h2><button onClick={() => setIsCartOpen(false)}><X size={24} /></button></div>
+              <div className="p-8 border-b border-white/5 flex items-center justify-between"><h2 className="text-2xl font-black uppercase tracking-tighter">Sua Lista</h2><button onClick={() => setIsCartOpen(false)}><X size={24} /></button></div>
               <div className="flex-1 p-8 space-y-6 overflow-y-auto">
-                {cart.length === 0 ? <p className="text-center py-20 uppercase font-black text-xs text-zinc-600">Vazio</p> : cart.map((item, i) => (
+                {cart.length === 0 ? <p className="text-center py-20 uppercase font-black text-xs text-zinc-600">O carrinho está vazio</p> : cart.map((item, i) => (
                   <div key={i} className="flex gap-4 p-4 bg-zinc-950/40 rounded-3xl border border-white/5">
                     <img src={item.image_url} className="w-16 h-16 object-cover rounded-xl" alt="" />
                     <div className="flex-1">
-                      <div className="flex justify-between items-start"><h4 className="text-[10px] font-bold text-white">{item.name}</h4><button onClick={() => setCart(cart.filter((_, idx) => idx !== i))} className="text-zinc-600"><X size={14}/></button></div>
-                      <p className="text-[10px] text-[#E11D48] font-black mt-1">{item.quantity} un</p>
+                      <div className="flex justify-between items-start"><h4 className="text-[10px] font-bold text-white line-clamp-1">{item.name}</h4><button onClick={() => setCart(cart.filter((_, idx) => idx !== i))} className="text-zinc-600 hover:text-rose-500"><X size={14}/></button></div>
+                      <p className="text-[10px] text-[#E11D48] font-black mt-1">{item.quantity} unidades</p>
                     </div>
                   </div>
                 ))}
               </div>
               {cart.length > 0 && (
                 <div className="p-8 border-t border-white/5 bg-zinc-950/80 space-y-4">
+                  <div className="flex justify-between items-center mb-4 px-2">
+                    <span className="text-[10px] font-black uppercase text-zinc-500">Total Estimado</span>
+                    <span className="text-lg font-black text-white">R$ {cart.reduce((acc, item) => acc + (item.price * item.quantity), 0).toFixed(2)}</span>
+                  </div>
                   <button onClick={() => { 
-                    let msg = `Olá! Unidade *${currentUser.unit_name}*:\n\n` + cart.map(i => `• ${i.name} - ${i.quantity}un`).join('\n');
+                    let msg = `Olá! Unidade *${currentUser.unit_name}* (*${currentUser.network_tag}*):\n\n` + cart.map(i => `• ${i.name} - ${i.quantity}un`).join('\n');
                     window.open(`https://wa.me/5517992198086?text=${encodeURIComponent(msg)}`, '_blank');
-                  }} className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest">Enviar WhatsApp</button>
+                  }} className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-emerald-600/20">Finalizar no WhatsApp</button>
                 </div>
               )}
             </motion.aside>
