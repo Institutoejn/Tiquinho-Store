@@ -17,7 +17,6 @@ export interface Product {
 export interface User {
   id: string;
   email: string;
-  password?: string;
   network_tag: string;
   unit_name: string;
   role: 'user' | 'admin';

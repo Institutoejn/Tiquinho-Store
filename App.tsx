@@ -60,18 +60,61 @@ export default function App() {
 
   useEffect(() => {
     const validateSession = async () => {
-      const saved = localStorage.getItem('tiquinho_session');
-      if (saved) {
-        try {
-          const user = JSON.parse(saved);
-          const { data } = await supabase.from('users').select('*').eq('id', user.id).single();
-          if (data) setCurrentUser(data);
-          else localStorage.removeItem('tiquinho_session');
-        } catch (e) { localStorage.removeItem('tiquinho_session'); }
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (profile) {
+          const user: UserType = {
+            id: session.user.id,
+            email: session.user.email!,
+            unit_name: profile.unit_name,
+            network_tag: profile.network_tag,
+            role: profile.role
+          };
+          setCurrentUser(user);
+          localStorage.setItem('tiquinho_session', JSON.stringify(user));
+        }
+      } else {
+        localStorage.removeItem('tiquinho_session');
       }
+      
       setIsLoading(false);
     };
+    
     validateSession();
+    
+    // Listener para mudanças de autenticação
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!session) {
+        setCurrentUser(null);
+        localStorage.removeItem('tiquinho_session');
+      } else {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (profile) {
+          const user: UserType = {
+            id: session.user.id,
+            email: session.user.email!,
+            unit_name: profile.unit_name,
+            network_tag: profile.network_tag,
+            role: profile.role
+          };
+          setCurrentUser(user);
+        }
+      }
+    });
+    
+    return () => subscription.unsubscribe();
   }, []);
 
   const fetchInitialData = async () => {
@@ -91,37 +134,75 @@ export default function App() {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.from('users').select('*').eq('email', formData.email.toLowerCase().trim()).eq('password', formData.password).single();
-      if (error || !data) throw new Error('Credenciais inválidas.');
-      setCurrentUser(data);
-      localStorage.setItem('tiquinho_session', JSON.stringify(data));
-      showToast(`Olá, ${data.unit_name}!`);
-    } catch (err: any) { showToast(err.message, 'error'); }
-    finally { setIsLoading(false); }
+      // Usar autenticação nativa do Supabase
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: formData.email.toLowerCase().trim(),
+        password: formData.password,
+      });
+      
+      if (authError) throw authError;
+      
+      // Buscar perfil do usuário
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.user.id)
+        .single();
+      
+      if (profileError || !profile) throw new Error('Perfil não encontrado.');
+      
+      const user: UserType = {
+        id: authData.user.id,
+        email: authData.user.email!,
+        unit_name: profile.unit_name,
+        network_tag: profile.network_tag,
+        role: profile.role
+      };
+      
+      setCurrentUser(user);
+      localStorage.setItem('tiquinho_session', JSON.stringify(user));
+      showToast(`Olá, ${profile.unit_name}!`);
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao fazer login', 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    
     if (formData.role === 'admin' && formData.adminKey !== 'TIQUINHO2026') {
       showToast("Chave Admin Inválida", "error");
       setIsLoading(false);
       return;
     }
+    
     try {
-      const newUser = { 
-        email: formData.email.toLowerCase().trim(), 
-        password: formData.password, 
-        unit_name: formData.unit_name, 
-        network_tag: formData.role === 'admin' ? 'admin' : formData.network_tag, 
-        role: formData.role 
-      };
-      const { data, error } = await supabase.from('users').insert([newUser]).select().single();
-      if (error) throw error;
-      setCurrentUser(data);
-      localStorage.setItem('tiquinho_session', JSON.stringify(data));
-    } catch (err: any) { showToast("Erro no cadastro", "error"); }
-    finally { setIsLoading(false); }
+      // Criar usuário no sistema de autenticação do Supabase
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.email.toLowerCase().trim(),
+        password: formData.password,
+        options: {
+          data: {
+            unit_name: formData.unit_name,
+            network_tag: formData.role === 'admin' ? 'admin' : formData.network_tag,
+            role: formData.role
+          }
+        }
+      });
+      
+      if (authError) throw authError;
+      
+      showToast("Conta criada! Verifique seu email e faça login.", "success");
+      setIsSigningUp(false);
+      setFormData({ email: '', password: '', unit_name: '', network_tag: 'drogaria-total', role: 'user', adminKey: '' });
+    } catch (err: any) {
+      showToast(err.message || "Erro no cadastro", "error");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -149,7 +230,11 @@ export default function App() {
     finally { setIsLoading(false); }
   };
 
-  const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('tiquinho_session'); };
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setCurrentUser(null);
+    localStorage.removeItem('tiquinho_session');
+  };
 
   const filteredProducts = useMemo(() => {
     if (currentUser?.role === 'admin') return products;

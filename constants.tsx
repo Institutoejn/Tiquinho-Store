@@ -5,8 +5,7 @@ export const USERS: User[] = [
   {
     id: '1',
     email: 'contato@drogariatotal.com',
-    password: 'admin',
-    // Corrigido: network_tag e unit_name para seguir a interface User, e removido networkName
+    // Removido 'password' pois não existe na interface User e a autenticação é via Supabase
     network_tag: 'drogaria-total',
     unit_name: 'Unidade Matriz',
     role: 'user'
@@ -14,8 +13,7 @@ export const USERS: User[] = [
   {
     id: '2',
     email: 'franquia@drogariatotal.com',
-    password: 'admin',
-    // Corrigido: network_tag e unit_name para seguir a interface User, e removido networkName
+    // Removido 'password' pois não existe na interface User e a autenticação é via Supabase
     network_tag: 'drogaria-total',
     unit_name: 'Unidade Franqueada 01',
     role: 'user'
@@ -23,8 +21,7 @@ export const USERS: User[] = [
   {
     id: '3',
     email: 'loja@generica.com',
-    password: 'admin',
-    // Corrigido: network_tag e unit_name para seguir a interface User, e removido networkName
+    // Removido 'password' pois não existe na interface User e a autenticação é via Supabase
     network_tag: 'generica',
     unit_name: 'Loja Padrão',
     role: 'user'
@@ -32,8 +29,7 @@ export const USERS: User[] = [
   {
     id: 'admin-1',
     email: 'admin@tiquinho.com',
-    password: 'admin',
-    // Corrigido: network_tag e unit_name para seguir a interface User, e removido networkName
+    // Removido 'password' pois não existe na interface User e a autenticação é via Supabase
     network_tag: 'admin',
     unit_name: 'Escritório Central',
     role: 'admin'
