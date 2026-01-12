@@ -232,15 +232,21 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    const productsChannel = supabase.channel('public:products')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchInitialData())
+    
+    // Configuração robusta do Realtime para garantir que clientes vejam o que o gestor adiciona
+    const channel = supabase.channel('global_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
+          // Se for INSERT, adicionamos diretamente ao estado se não formos o gestor (o gestor já atualizou otimisticamente)
+          // Mas para garantir consistência total, recarregar é mais seguro para clientes.
+          fetchInitialData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+          fetchInitialData();
+      })
       .subscribe();
-    const ordersChannel = supabase.channel('public:orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchInitialData())
-      .subscribe();
+
     return () => {
-      supabase.removeChannel(productsChannel);
-      supabase.removeChannel(ordersChannel);
+      supabase.removeChannel(channel);
     };
   }, [currentUser]);
 
@@ -262,8 +268,6 @@ export default function App() {
       
       if (data.erro) throw new Error("CEP não encontrado");
 
-      // Lógica de cálculo simplificada baseada na região
-      // Como origem é SP:
       let cost = 0;
       if (data.uf === 'SP') {
         cost = 25.90; // Frete Estadual
@@ -395,16 +399,49 @@ export default function App() {
       available_sizes: newProduct.available_sizes
     };
     try {
-      if (editingId) await supabase.from('products').update(payload).eq('id', editingId);
-      else await supabase.from('products').insert([payload]);
+      let resultData;
+      
+      // NOTA: Usamos .select() para garantir que o Supabase retorne o objeto criado/atualizado
+      // Isso permite atualização imediata do estado local sem esperar o refresh.
+      if (editingId) {
+         const { data, error } = await supabase.from('products').update(payload).eq('id', editingId).select();
+         if (error) throw error;
+         resultData = data[0];
+         
+         // Atualiza estado local imediatamente (Optimistic Update)
+         setProducts(prev => prev.map(p => p.id === editingId ? resultData : p));
+      } else {
+         const { data, error } = await supabase.from('products').insert([payload]).select();
+         if (error) throw error;
+         resultData = data[0];
+         
+         // Adiciona ao estado local imediatamente
+         setProducts(prev => [...prev, resultData].sort((a, b) => a.name.localeCompare(b.name)));
+      }
       
       const rede = newProduct.network_tag.replace('-', ' ').toUpperCase();
-      showToast(editingId ? "Produto atualizado com sucesso!" : `Produto publicado e rede ${rede} notificada!`);
-      await fetchInitialData();
+      showToast(editingId ? "Produto atualizado!" : `Produto publicado para ${rede}!`);
+      
       setEditingId(null);
       setNewProduct({ name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
-    } catch (err) { showToast("Erro ao salvar", "error"); }
+    } catch (err: any) { 
+       console.error(err);
+       showToast("Erro ao salvar: " + err.message, "error"); 
+    }
     finally { setIsLoading(false); }
+  };
+
+  const handleDeleteProduct = async (id: string) => {
+      if(!confirm("Tem certeza que deseja excluir este modelo?")) return;
+      try {
+          const { error } = await supabase.from('products').delete().eq('id', id);
+          if (error) throw error;
+          // Remove do estado local imediatamente
+          setProducts(prev => prev.filter(p => p.id !== id));
+          showToast("Produto removido com sucesso.", "success");
+      } catch (err) {
+          showToast("Erro ao excluir produto.", "error");
+      }
   };
 
   const updateQuantity = (index: number, delta: number) => {
@@ -443,6 +480,7 @@ export default function App() {
       setCep('');
       setIsPaymentOpen(false);
       setIsCartOpen(false);
+      // Realtime cuida do resto, mas chamamos por garantia
       fetchInitialData();
     } catch (err) {
       showToast("Erro ao processar pedido.", "error");
@@ -642,7 +680,7 @@ export default function App() {
                     <div className="flex items-center gap-3"><span className="text-sm font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</span><span className="text-[9px] font-bold text-zinc-600 bg-zinc-950 px-2 py-1 rounded-lg border border-white/5 flex items-center gap-1"><Package size={10} /> MÍN: {p.min_order} UN</span></div>
                     <div className="flex gap-2 mt-3">
                       <button onClick={() => { setEditingId(p.id); setNewProduct({ name: p.name, price: p.price.toString(), image_url: p.image_url, network_tag: p.network_tag, category: p.category, description: p.description || '', min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [] }); window.scrollTo({ top: 400, behavior: 'smooth' }); }} className="flex-1 bg-zinc-800/80 hover:bg-zinc-800 py-2 rounded-xl text-[9px] uppercase font-black text-zinc-300 flex items-center justify-center gap-1 transition-colors"><MessageCircle size={10} className="rotate-90" /> Editar</button>
-                      <button onClick={async () => { if(confirm("Excluir?")) { await supabase.from('products').delete().eq('id', p.id); } }} className="w-8 h-8 flex items-center justify-center bg-rose-950/30 text-rose-500 rounded-xl hover:bg-rose-950/50 transition-colors"><Trash2 size={14}/></button>
+                      <button onClick={() => handleDeleteProduct(p.id)} className="w-8 h-8 flex items-center justify-center bg-rose-950/30 text-rose-500 rounded-xl hover:bg-rose-950/50 transition-colors"><Trash2 size={14}/></button>
                     </div>
                   </div>
                 </div>
