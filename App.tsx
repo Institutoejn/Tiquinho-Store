@@ -406,18 +406,24 @@ export default function App() {
     };
 
     try {
-      let resultData;
+      let resultData: Product; // TIPAGEM EXPLÍCITA CORRIGINDO O ERRO TS7034
       
       if (editingId) {
          const { data, error } = await supabase.from('products').update(payload).eq('id', editingId).select();
          if (error) throw error;
-         resultData = data[0];
+         if (!data || data.length === 0) throw new Error("Erro de atualização");
+         
+         resultData = data[0] as Product; // Cast explícito
+
          // Optimistic Update
          setProducts(prev => prev.map(p => p.id === editingId ? resultData : p));
       } else {
          const { data, error } = await supabase.from('products').insert([payload]).select();
          if (error) throw error;
-         resultData = data[0];
+         if (!data || data.length === 0) throw new Error("Erro de inserção");
+
+         resultData = data[0] as Product; // Cast explícito
+
          // Optimistic Update
          setProducts(prev => [...prev, resultData].sort((a, b) => a.name.localeCompare(b.name)));
       }
@@ -507,8 +513,6 @@ export default function App() {
   // --- RENDER ---
   if (isLoading && !currentUser) return <Spinner />;
 
-  // ... (REST OF THE RENDER CODE REMAINS EXACTLY THE SAME - SKIPPING TO END FOR BREVITY, THE LOGIC IS IN THE FUNCTIONS ABOVE)
-  
   // 1. AUTH FLOWS
   if (!currentUser) {
     return (
@@ -620,10 +624,30 @@ export default function App() {
               </div>
               <div className="lg:col-span-8 space-y-6">
                 <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Título do Uniforme *</label><input type="text" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors placeholder:text-zinc-800" required /></div>
-                <div className="grid grid-cols-2 gap-6">
-                  <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Preço Unitário (R$)</label><input type="number" step="0.01" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors" required /></div>
-                  <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Pedido Mínimo (Unidades)</label><div className="relative"><input type="number" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors text-center font-bold" required /><div className="absolute inset-y-0 right-4 flex items-center pointer-events-none"><Package size={14} className="text-[#E11D48]" /></div></div></div>
+                
+                {/* CAMPO DE DESCRIÇÃO ADICIONADO */}
+                <div>
+                  <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Descrição do Produto</label>
+                  <textarea rows={3} value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors placeholder:text-zinc-800" placeholder="Detalhes do tecido, acabamento, etc..."></textarea>
                 </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Categoria *</label>
+                    <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none appearance-none font-bold cursor-pointer">
+                      <option value="Masculino">Masculino</option>
+                      <option value="Feminino">Feminino</option>
+                      <option value="Unissex">Unissex</option>
+                      <option value="Inverno">Inverno</option>
+                      <option value="Acessórios">Acessórios</option>
+                      <option value="Operacional">Operacional</option>
+                    </select>
+                  </div>
+                  <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Preço Unitário (R$)</label><input type="number" step="0.01" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors" required /></div>
+                </div>
+
+                <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Pedido Mínimo (Unidades)</label><div className="relative"><input type="number" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors text-center font-bold" required /><div className="absolute inset-y-0 right-4 flex items-center pointer-events-none"><Package size={14} className="text-[#E11D48]" /></div></div></div>
+
                 <div>
                    <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Grade de Tamanhos Disponíveis *</label>
                    <div className="flex gap-2 mb-2">
