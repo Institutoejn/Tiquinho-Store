@@ -584,6 +584,33 @@ export default function App() {
     return orders.reduce((acc, order) => acc + order.total_amount, 0);
   }, [orders]);
 
+  // CÁLCULO DA REDE MAIS ATIVA BASEADO EM VENDAS REAIS
+  const mostActiveNetwork = useMemo(() => {
+    if (orders.length === 0) return '---';
+
+    const salesByNetwork: Record<string, number> = {};
+
+    orders.forEach(order => {
+      const tag = order.network_tag ? order.network_tag.trim().toLowerCase() : 'desconhecido';
+      salesByNetwork[tag] = (salesByNetwork[tag] || 0) + order.total_amount;
+    });
+
+    let topNetwork = '---';
+    let maxSales = 0;
+
+    Object.entries(salesByNetwork).forEach(([tag, total]) => {
+      if (total > maxSales) {
+        maxSales = total;
+        topNetwork = tag;
+      }
+    });
+
+    if (topNetwork === '---' || maxSales === 0) return '---';
+
+    // Formata o nome da rede (ex: "droga-raia" -> "DROGA RAIA")
+    return topNetwork.replace(/-/g, ' ').toUpperCase();
+  }, [orders]);
+
   // --- RENDER ---
   if (isLoading && !currentUser) return <Spinner />;
 
@@ -696,7 +723,8 @@ export default function App() {
               </div>
               <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
                 <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center mb-2"><TrendingUp className="text-rose-500" size={20} /></div>
-                <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">Drogaria Total</h4></div>
+                {/* CAMPO REDE MAIS ATIVA AGORA É DINÂMICO */}
+                <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">{mostActiveNetwork}</h4></div>
               </div>
             </div>
           </section>
