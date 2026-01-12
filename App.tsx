@@ -4,7 +4,7 @@ import {
   ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, Hourglass, Loader2, 
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
-  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag
+  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -19,11 +19,23 @@ class PixPayload {
   private txId: string;
 
   constructor(key: string, name: string, city: string, amount: number, txId: string = '***') {
-    this.merchantKey = key;
-    this.merchantName = name;
-    this.merchantCity = city;
+    // Sanitização rigorosa para evitar erro de leitura no banco
+    this.merchantKey = key.replace(/\D/g, ''); // Remove tudo que não for número (para CNPJ/CPF/Tel)
+    this.merchantName = this.normalizeString(name, 25); // Max 25 chars
+    this.merchantCity = this.normalizeString(city, 15); // Max 15 chars (Regra crítica do PIX)
     this.amount = amount.toFixed(2);
-    this.txId = txId;
+    this.txId = this.normalizeString(txId, 25) || '***';
+  }
+
+  // Remove acentos e limita tamanho
+  private normalizeString(str: string, limit: number): string {
+    return str
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Remove acentos
+      .replace(/[^a-zA-Z0-9 ]/g, "")   // Remove especiais
+      .toUpperCase()
+      .substring(0, limit)
+      .trim();
   }
 
   private formatField(id: string, value: string): string {
@@ -36,8 +48,11 @@ class PixPayload {
     for (let i = 0; i < payload.length; i++) {
       crc ^= payload.charCodeAt(i) << 8;
       for (let j = 0; j < 8; j++) {
-        if ((crc & 0x8000) !== 0) crc = (crc << 1) ^ 0x1021;
-        else crc = crc << 1;
+        if ((crc & 0x8000) !== 0) {
+          crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
+        } else {
+          crc = (crc << 1) & 0xFFFF;
+        }
       }
     }
     return (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
@@ -112,7 +127,7 @@ export default function App() {
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
   const [formData, setFormData] = useState({ 
-    email: '', password: '', unit_name: '', network_tag: 'drogaria-total', role: 'user' as 'user' | 'admin', adminKey: '' 
+    email: '', password: '', unit_name: '', network_tag: '', role: 'user' as 'user' | 'admin', adminKey: '' 
   });
 
   // App State
@@ -124,6 +139,9 @@ export default function App() {
   
   // Client Selection State (Para guardar o tamanho selecionado de cada produto antes de adicionar ao carrinho)
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
+  
+  // Admin Dynamic Data State
+  const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -144,7 +162,7 @@ export default function App() {
     name: '', 
     price: '', 
     image_url: '', 
-    network_tag: 'drogaria-total', 
+    network_tag: '', 
     category: 'Masculino', 
     description: '', 
     min_order: '10', 
@@ -215,19 +233,38 @@ export default function App() {
   const fetchInitialData = async () => {
     if (!currentUser) return;
     try {
+      // 1. Fetch Produtos
       let query = supabase.from('products').select('*').order('name');
       const { data: prodData } = await query;
       if (prodData) {
-        // Ordenação alfabética consistente
         setProducts(prodData.sort((a, b) => a.name.localeCompare(b.name)));
       }
 
+      // 2. Fetch Pedidos
       let orderQuery = supabase.from('orders').select('*').order('created_at', { ascending: false });
       if (currentUser.role !== 'admin') {
         orderQuery = orderQuery.eq('user_id', currentUser.id);
       }
       const { data: orderData } = await orderQuery;
       if (orderData) setOrders(orderData);
+
+      // 3. Fetch Redes Únicas (Para o Admin popular o Select)
+      // Combina dados de perfis E produtos para garantir que nada fique de fora
+      if (currentUser.role === 'admin') {
+          const networksSet = new Set<string>();
+
+          // Tenta pegar de profiles (usuários cadastrados)
+          const { data: profilesData } = await supabase.from('profiles').select('network_tag').neq('role', 'admin');
+          if (profilesData) profilesData.forEach(p => p.network_tag && networksSet.add(p.network_tag));
+
+          // Tenta pegar de produtos existentes (redes que já tem produtos)
+          const { data: productsData } = await supabase.from('products').select('network_tag');
+          if (productsData) productsData.forEach(p => p.network_tag && networksSet.add(p.network_tag));
+
+          // Converte Set para Array, filtra vazios e ordena
+          const uniqueNetworks = Array.from(networksSet).filter(Boolean).sort();
+          setAvailableNetworks(uniqueNetworks);
+      }
 
     } catch (err) { console.error('Sync error:', err); }
   };
@@ -241,13 +278,9 @@ export default function App() {
     
     // Configuração robusta do Realtime
     const channel = supabase.channel('global_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
-          // Atualiza dados sempre que houver mudança, garantindo sincronia entre gestor e cliente
-          fetchInitialData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-          fetchInitialData();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchInitialData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchInitialData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchInitialData())
       .subscribe();
 
     return () => {
@@ -305,6 +338,7 @@ export default function App() {
     const total = subtotal + (shippingCost || 0);
     
     // CNPJ Tiquinho: 53424027000178
+    // Cidade: SAO JOSE RIO PRETO (Sanitizada dentro da classe para SAO JOSE RIO PR)
     const pix = new PixPayload(
       '53424027000178',
       'TIQUINHO UNIFORMES',
@@ -354,6 +388,14 @@ export default function App() {
       setIsLoading(false);
       return;
     }
+    
+    // Validação básica para impedir rede vazia
+    if (authFlow !== 'admin' && !formData.network_tag.trim()) {
+      showToast("Informe o nome da sua Rede/Franquia", "error");
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email.toLowerCase().trim(),
@@ -361,7 +403,9 @@ export default function App() {
         options: {
           data: {
             unit_name: formData.unit_name,
-            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag,
+            // AQUI ESTÁ A MÁGICA: Salva exatamente o que o usuário digitou (ex: "Droga Raia")
+            // Apenas removemos espaços extras nas pontas
+            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag.trim(),
             role: authFlow === 'admin' ? 'admin' : 'user'
           }
         }
@@ -369,7 +413,7 @@ export default function App() {
       if (authError) throw authError;
       showToast("Conta criada! Verifique seu email e faça login.", "success");
       setIsSigningUp(false);
-      setFormData({ email: '', password: '', unit_name: '', network_tag: 'drogaria-total', role: 'user', adminKey: '' });
+      setFormData({ email: '', password: '', unit_name: '', network_tag: '', role: 'user', adminKey: '' });
     } catch (err: any) {
       showToast(err.message || "Erro no cadastro", "error");
     } finally {
@@ -393,7 +437,12 @@ export default function App() {
     e.preventDefault();
     setIsLoading(true);
     
-    // Tratamento defensivo para tamanhos
+    if (!newProduct.network_tag) {
+        showToast("Selecione uma Rede Franqueada.", "error");
+        setIsLoading(false);
+        return;
+    }
+
     const safeSizes = Array.isArray(newProduct.available_sizes) ? newProduct.available_sizes : [];
 
     const payload = {
@@ -401,7 +450,8 @@ export default function App() {
       description: newProduct.description,
       price: parseFloat(newProduct.price),
       image_url: newProduct.image_url,
-      network_tag: newProduct.network_tag.toLowerCase().trim(),
+      // Salva a rede selecionada do Dropdown (que veio do Banco)
+      network_tag: newProduct.network_tag,
       category: newProduct.category,
       min_order: parseInt(newProduct.min_order),
       production_days: parseInt(newProduct.production_days),
@@ -409,25 +459,19 @@ export default function App() {
     };
 
     try {
-      let resultData: Product; // TIPAGEM EXPLÍCITA CORRIGINDO O ERRO TS7034
+      let resultData: Product;
       
       if (editingId) {
          const { data, error } = await supabase.from('products').update(payload).eq('id', editingId).select();
          if (error) throw error;
          if (!data || data.length === 0) throw new Error("Erro de atualização");
-         
-         resultData = data[0] as Product; // Cast explícito
-
-         // Optimistic Update
+         resultData = data[0] as Product;
          setProducts(prev => prev.map(p => p.id === editingId ? resultData : p));
       } else {
          const { data, error } = await supabase.from('products').insert([payload]).select();
          if (error) throw error;
          if (!data || data.length === 0) throw new Error("Erro de inserção");
-
-         resultData = data[0] as Product; // Cast explícito
-
-         // Optimistic Update
+         resultData = data[0] as Product;
          setProducts(prev => [...prev, resultData].sort((a, b) => a.name.localeCompare(b.name)));
       }
       
@@ -435,10 +479,10 @@ export default function App() {
       showToast(editingId ? "Produto atualizado!" : `Produto publicado para ${rede}!`);
       
       setEditingId(null);
-      setNewProduct({ name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
+      // Reseta o formulário
+      setNewProduct({ name: '', price: '', image_url: '', network_tag: '', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
     } catch (err: any) { 
        console.error(err);
-       // Mensagem de erro mais amigável para o usuário se for erro de coluna
        if (err.message?.includes('available_sizes')) {
          showToast("Erro: Execute o comando SQL fornecido para corrigir o banco.", "error");
        } else {
@@ -490,6 +534,24 @@ export default function App() {
       }]);
 
       if (error) throw error;
+      
+      // --- NOTIFICAÇÃO AUTOMÁTICA WHATSAPP ---
+      const itemsList = cart.map(item => 
+        `▪ ${item.quantity}x ${item.name} (Tam: ${item.selectedSize})`
+      ).join('\n');
+      
+      const message = `*NOVO PEDIDO CONFIRMADO!* 🚀\n\n` +
+        `👤 *Cliente:* ${currentUser.unit_name}\n` +
+        `🏢 *Rede:* ${currentUser.network_tag.toUpperCase()}\n\n` +
+        `📦 *Resumo do Pedido:*\n${itemsList}\n\n` +
+        `🚚 *Frete:* ${shippingCost ? `R$ ${shippingCost.toFixed(2)}` : 'A combinar'}\n` +
+        `💰 *Total Geral:* R$ ${(total).toFixed(2)}\n\n` +
+        `✅ *Status:* Pagamento via PIX realizado. Aguardando conferência.`;
+      
+      // Abre o WhatsApp com a mensagem pré-preenchida
+      const whatsappUrl = `https://wa.me/5517992198086?text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank');
+
       showToast("Pagamento confirmado! Pedido enviado para produção.", "success");
       setCart([]);
       setShippingCost(null);
@@ -506,6 +568,7 @@ export default function App() {
 
   const filteredProducts = useMemo(() => {
     if (currentUser?.role === 'admin') return products;
+    // Filtragem exata: O que está no produto deve bater com o que está no usuário
     return products.filter(p => p.network_tag === currentUser?.network_tag);
   }, [products, currentUser]);
 
@@ -566,7 +629,24 @@ export default function App() {
                     {authFlow === 'admin' ? (
                        <div className="relative"><input type="password" placeholder="Chave de Acesso Administrativa" value={formData.adminKey} onChange={e => setFormData({...formData, adminKey: e.target.value})} className="w-full bg-zinc-900/50 border border-[#E11D48]/20 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /><p className="text-[9px] text-zinc-600 mt-2 font-medium uppercase tracking-wider">* Solicite a chave com a equipe Tiquinho</p></div>
                     ) : (
-                       <select value={formData.network_tag} onChange={e => setFormData({...formData, network_tag: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm appearance-none cursor-pointer"><option value="drogaria-total">Drogaria Total</option><option value="farmacia-abc">Farmácia ABC</option><option value="generica">Rede Independente</option></select>
+                       // NOVO INPUT DINÂMICO PARA REDE
+                       <div className="relative">
+                         <input 
+                           type="text" 
+                           list="network-suggestions"
+                           placeholder="Nome da Rede / Franquia (Ex: Droga Raia)" 
+                           value={formData.network_tag} 
+                           onChange={e => setFormData({...formData, network_tag: e.target.value})} 
+                           className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                           required
+                         />
+                         <datalist id="network-suggestions">
+                           {/* Sugestões baseadas nas redes já existentes */}
+                           {availableNetworks.map(net => (
+                             <option key={net} value={net} />
+                           ))}
+                         </datalist>
+                       </div>
                     )}
                   </>)}
                   <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
@@ -695,7 +775,30 @@ export default function App() {
                       required 
                     />
                   </div>
-                  <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Rede Franqueada *</label><select value={newProduct.network_tag} onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none appearance-none font-bold"><option value="drogaria-total">Drogaria Total</option><option value="farmacia-abc">Farmácia ABC</option><option value="generica">Uso Geral</option></select></div>
+                  {/* SELECT DINÂMICO DE REDE FRANQUEADA (POPULADO PELO BANCO MAS PERMITE DIGITAÇÃO) */}
+                  <div>
+                    <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Rede Franqueada (Ativas) *</label>
+                    <div className="relative">
+                      <input 
+                        type="text" 
+                        list="admin-network-list"
+                        placeholder="Selecione ou Digite a Rede..." 
+                        value={newProduct.network_tag} 
+                        onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} 
+                        className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none font-bold"
+                        required
+                      />
+                      <datalist id="admin-network-list">
+                        {/* Sugestões baseadas nas redes já existentes */}
+                        {availableNetworks.map(net => (
+                            <option key={net} value={net} />
+                        ))}
+                      </datalist>
+                      <div className="absolute right-4 top-4 pointer-events-none text-zinc-500">
+                        <ChevronDown size={16} />
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar Alterações' : 'Publicar e Notificar Rede'}</button>
               </div>
@@ -967,36 +1070,6 @@ export default function App() {
               )}
             </motion.aside>
           </>
-        )}
-      </AnimatePresence>
-
-      {/* QR CODE PAYMENT MODAL */}
-      <AnimatePresence>
-        {isPaymentOpen && (
-           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
-               <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-zinc-950 border border-white/10 rounded-[40px] p-10 max-w-md w-full relative shadow-2xl">
-                  <button onClick={() => setIsPaymentOpen(false)} className="absolute top-6 right-6 text-zinc-500 hover:text-white"><X size={24}/></button>
-                  <div className="flex flex-col items-center text-center">
-                    <div className="w-16 h-16 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center mb-6"><QrCode className="text-[#E11D48]" size={32} /></div>
-                    <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Pagamento PIX</h2>
-                    <p className="text-zinc-500 text-xs mb-8">Escaneie o código abaixo para finalizar seu pedido.</p>
-                    
-                    <div className="bg-white p-4 rounded-3xl mb-8">
-                      {/* GERAÇÃO REAL DO QR CODE PIX */}
-                      <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getPixCode())}`} alt="QR Code PIX" className="w-48 h-48 mix-blend-multiply" />
-                    </div>
-                    
-                    <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-4">Total: {formatCurrency(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0))}</p>
-
-                    <div className="flex gap-3 w-full">
-                       <button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Código PIX Copiado!", "success"); }} className="flex-1 bg-zinc-900 text-zinc-300 py-4 rounded-2xl font-black uppercase text-[9px] tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-800"><Copy size={14}/> Copiar Código</button>
-                       <button onClick={handleFinalizeOrder} className="flex-1 bg-emerald-500 text-white py-4 rounded-2xl font-black uppercase text-[9px] tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-600 shadow-lg shadow-emerald-500/20">{isLoading ? <Loader2 className="animate-spin" size={14}/> : 'Confirmar Pagamento'}</button>
-                    </div>
-                  </div>
-               </motion.div>
-            </motion.div>
-           </>
         )}
       </AnimatePresence>
 
