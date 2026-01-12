@@ -4,7 +4,7 @@ import {
   ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, Hourglass, Loader2, 
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
-  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin
+  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -122,6 +122,9 @@ export default function App() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   
+  // Client Selection State (Para guardar o tamanho selecionado de cada produto antes de adicionar ao carrinho)
+  const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
+
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -804,27 +807,69 @@ export default function App() {
         </div>
         
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-          {filteredProducts.map(p => (
-            <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group shadow-2xl hover:border-[#E11D48]/30 transition-all">
-              <div className="aspect-square bg-zinc-950 overflow-hidden relative">
-                <img src={p.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="" />
-                <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black via-black/80 to-transparent">
-                  <p className="text-[10px] text-zinc-300 font-medium line-clamp-3">{p.description}</p>
+          {filteredProducts.map(p => {
+             // Determinar tamanho selecionado para este produto (default: primeiro da lista ou Único)
+             const selectedSize = clientSelectedSizes[p.id] || (p.available_sizes && p.available_sizes.length > 0 ? p.available_sizes[0] : 'Único');
+             
+             return (
+              <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group shadow-2xl hover:border-[#E11D48]/30 transition-all">
+                <div className="aspect-square bg-zinc-950 overflow-hidden relative">
+                  <img src={p.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="" />
+                  
+                  {/* CATEGORIA TAG */}
+                  <div className="absolute top-4 right-4">
+                    <span className="bg-black/60 backdrop-blur-md text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/10 flex items-center gap-1">
+                      <Tag size={10} className="text-[#E11D48]" /> {p.category}
+                    </span>
+                  </div>
+
+                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black via-black/80 to-transparent">
+                    <p className="text-[10px] text-zinc-300 font-medium line-clamp-3">{p.description}</p>
+                  </div>
+                </div>
+                <div className="p-6 flex-1 flex flex-col">
+                  <h3 className="text-base font-bold text-white mb-1 line-clamp-1">{p.name}</h3>
+                  <p className="text-xl font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</p>
+                  
+                  {/* SELETOR DE TAMANHOS */}
+                  <div className="mt-4">
+                    <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Selecione o Tamanho:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {p.available_sizes && p.available_sizes.length > 0 ? (
+                        p.available_sizes.map(size => (
+                          <button
+                            key={size}
+                            onClick={() => setClientSelectedSizes(prev => ({...prev, [p.id]: size as Size}))}
+                            className={`min-w-[32px] h-8 px-2 rounded-lg text-[10px] font-black transition-all border ${selectedSize === size ? 'bg-[#E11D48] border-[#E11D48] text-white shadow-lg shadow-rose-600/20' : 'bg-zinc-950 border-white/10 text-zinc-400 hover:border-white/30'}`}
+                          >
+                            {size}
+                          </button>
+                        ))
+                      ) : (
+                        <span className="text-[10px] text-zinc-600 font-bold uppercase">Tamanho Único</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
+                    <div className="flex items-center gap-1.5 text-[9px] font-bold text-zinc-400 uppercase"><Hourglass size={12} className="text-[#E11D48]" /> Confecção: {p.production_days} dias</div>
+                    <div className="flex items-center gap-1.5 text-[9px] font-bold text-zinc-400 uppercase"><Package size={12} className="text-[#E11D48]" /> Mínimo: {p.min_order} un</div>
+                  </div>
+
+                  {/* BOTÃO DE COMPRAR AGORA USA O TAMANHO SELECIONADO */}
+                  <button 
+                    onClick={() => { 
+                      setCart([...cart, { ...p, selectedSize: selectedSize as Size, quantity: p.min_order }]); 
+                      showToast(`Adicionado: Tamanho ${selectedSize}`); 
+                    }} 
+                    className="mt-6 w-full font-black py-4 rounded-2xl bg-white text-zinc-950 uppercase text-[10px] tracking-widest hover:bg-[#E11D48] hover:text-white transition-all shadow-lg hover:shadow-rose-900/20"
+                  >
+                    Comprar ({p.min_order} un)
+                  </button>
                 </div>
               </div>
-              <div className="p-6 flex-1 flex flex-col">
-                <h3 className="text-base font-bold text-white mb-1 line-clamp-1">{p.name}</h3>
-                <p className="text-xl font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</p>
-                <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
-                  <div className="flex items-center gap-1.5 text-[9px] font-bold text-zinc-400 uppercase"><Hourglass size={12} className="text-[#E11D48]" /> Confecção: {p.production_days} dias</div>
-                  <div className="flex items-center gap-1.5 text-[9px] font-bold text-zinc-400 uppercase"><Package size={12} className="text-[#E11D48]" /> Mínimo: {p.min_order} un</div>
-                </div>
-                <button onClick={() => { setCart([...cart, { ...p, selectedSize: 'M', quantity: p.min_order }]); showToast("Adicionado ao carrinho!"); }} className="mt-6 w-full font-black py-4 rounded-2xl bg-white text-zinc-950 uppercase text-[10px] tracking-widest hover:bg-[#E11D48] hover:text-white transition-all shadow-lg hover:shadow-rose-900/20">
-                  Comprar ({p.min_order} un)
-                </button>
-              </div>
-            </div>
-          ))}
+             );
+          })}
         </div>
       </main>
 
@@ -845,7 +890,8 @@ export default function App() {
                   <div key={i} className="flex gap-4 p-4 bg-zinc-950/40 rounded-3xl border border-white/5">
                     <img src={item.image_url} className="w-16 h-16 object-cover rounded-xl" alt="" />
                     <div className="flex-1">
-                      <h4 className="text-[10px] font-bold text-white line-clamp-1 uppercase mb-2">{item.name}</h4>
+                      <h4 className="text-[10px] font-bold text-white line-clamp-1 uppercase mb-1">{item.name}</h4>
+                      <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tamanho: {item.selectedSize}</p>
                       <div className="flex items-center gap-3">
                          <button onClick={() => updateQuantity(i, -1)} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Minus size={12}/></button>
                          <span className="text-sm font-black text-[#E11D48]">{item.quantity}</span>
