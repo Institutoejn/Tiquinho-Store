@@ -16,11 +16,14 @@ const Logo = ({ className = "w-10 h-10" }: { className?: string }) => (
 );
 
 const Spinner = () => (
-  <div className="fixed inset-0 z-[300] bg-black/40 backdrop-blur-sm flex items-center justify-center">
-    <div className="bg-zinc-900 p-8 rounded-[32px] border border-white/5 flex flex-col items-center gap-4 shadow-2xl">
-      <Loader2 className="w-10 h-10 text-[#E11D48] animate-spin" />
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Sincronizando...</p>
+  <div className="fixed inset-0 z-[300] bg-[#09090b] flex flex-col items-center justify-center">
+    <div className="relative">
+      <div className="w-16 h-16 border-4 border-[#E11D48]/20 border-t-[#E11D48] rounded-full animate-spin"></div>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="w-2 h-2 bg-[#E11D48] rounded-full animate-pulse"></div>
+      </div>
     </div>
+    <p className="mt-6 text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500 animate-pulse">Sincronizando Sistema</p>
   </div>
 );
 
@@ -48,7 +51,7 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Inicializa como true para verificar sessão
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -58,15 +61,34 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sincronização automática quando o usuário muda
+  // Verificação inicial de sessão com validação no banco
   useEffect(() => {
-    const saved = localStorage.getItem('tiquinho_session');
-    if (saved) {
-      const user = JSON.parse(saved);
-      setCurrentUser(user);
-    }
+    const validateSession = async () => {
+      const saved = localStorage.getItem('tiquinho_session');
+      if (saved) {
+        try {
+          const user = JSON.parse(saved);
+          const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+
+          if (data && !error) {
+            setCurrentUser(data);
+          } else {
+            localStorage.removeItem('tiquinho_session');
+          }
+        } catch (e) {
+          localStorage.removeItem('tiquinho_session');
+        }
+      }
+      setIsLoading(false);
+    };
+    validateSession();
   }, []);
 
+  // Busca dados apenas se houver usuário válido
   useEffect(() => {
     if (currentUser) {
       fetchInitialData();
@@ -75,30 +97,23 @@ export default function App() {
 
   const fetchInitialData = async () => {
     if (!currentUser) return;
-    setIsLoading(true);
     try {
-      // Sincronia de Rede (Tag)
       let query = supabase.from('products').select('*');
       
-      if (currentUser.role === 'admin') {
-        // Gestor vê tudo
+      if (currentUser?.role === 'admin') {
         const { data: prods } = await query.order('name');
         if (prods) setProducts(prods);
-        
         const { data: ords } = await supabase.from('orders').select('*');
         if (ords) setOrders(ords);
       } else {
-        // Franqueado vê apenas sua rede + genérica (Normalizado)
-        const userTag = currentUser.network_tag.toLowerCase().trim();
+        const userTag = currentUser?.network_tag?.toLowerCase().trim() || 'generica';
         const { data: prods } = await query
           .or(`network_tag.eq.${userTag},network_tag.eq.generica`)
           .order('name');
         if (prods) setProducts(prods);
       }
     } catch (err) { 
-      console.error('Data error:', err); 
-    } finally { 
-      setIsLoading(false); 
+      console.error('Data sync error:', err); 
     }
   };
 
@@ -109,18 +124,25 @@ export default function App() {
     setIsLoading(true);
     try {
       const { data, error } = await supabase.from('users').select('*').eq('email', formData.email.toLowerCase().trim()).eq('password', formData.password).single();
-      if (error || !data) throw new Error('Acesso negado.');
+      if (error || !data) {
+        localStorage.removeItem('tiquinho_session');
+        throw new Error('E-mail ou senha inválidos.');
+      }
       
       const sessionUser: UserType = {
         ...data,
-        network_tag: data.network_tag.toLowerCase().trim()
+        network_tag: data.network_tag?.toLowerCase().trim() || 'generica'
       };
 
       setCurrentUser(sessionUser);
       localStorage.setItem('tiquinho_session', JSON.stringify(sessionUser));
       showToast(`Bem-vindo, ${sessionUser.unit_name}!`);
-    } catch (err: any) { showToast(err.message, 'error'); }
-    finally { setIsLoading(false); }
+    } catch (err: any) { 
+      showToast(err.message, 'error'); 
+      localStorage.removeItem('tiquinho_session');
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -143,15 +165,14 @@ export default function App() {
       const { data, error } = await supabase.from('users').insert([newUser]).select().single();
       if (error) throw error;
       
-      const sessionUser = {
-        ...data,
-        network_tag: normalizedTag
-      };
-
-      setCurrentUser(sessionUser);
-      localStorage.setItem('tiquinho_session', JSON.stringify(sessionUser));
-    } catch (err: any) { showToast("Erro no cadastro", "error"); }
-    finally { setIsLoading(false); }
+      setCurrentUser(data);
+      localStorage.setItem('tiquinho_session', JSON.stringify(data));
+      showToast("Cadastro realizado com sucesso!");
+    } catch (err: any) { 
+      showToast("Erro no cadastro. Tente outro e-mail.", "error"); 
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   const handleLogout = () => { 
@@ -164,10 +185,7 @@ export default function App() {
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
-    // Normalização: Transforma a tag em minúscula antes de salvar
     const normalizedNetworkTag = newProduct.network_tag.toLowerCase().trim();
-    
     const payload = {
       name: newProduct.name, 
       price: parseFloat(newProduct.price), 
@@ -186,7 +204,7 @@ export default function App() {
       fetchInitialData();
       setEditingId(null);
       setNewProduct({ name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', min_order: '10', production_days: '15' });
-    } catch (err) { showToast("Erro ao salvar", "error"); }
+    } catch (err) { showToast("Erro ao salvar produto", "error"); }
     finally { setIsLoading(false); }
   };
 
@@ -201,10 +219,13 @@ export default function App() {
 
   const revenue = useMemo(() => orders.reduce((acc, o) => acc + (o.total_price || 0), 0), [orders]);
 
+  // Bloqueio de renderização durante carregamento inicial
+  if (isLoading && !currentUser) return <Spinner />;
+
+  // Renderização da Tela de Login/Cadastro
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        {isLoading && <Spinner />}
         <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-[#E11D48]/10 rounded-full blur-[120px]" />
         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-md z-10">
@@ -232,7 +253,9 @@ export default function App() {
                   <option value="generica">Rede Independente</option>
                 </select>
               )}
-              <button type="submit" className="w-full bg-[#E11D48] text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-rose-600/20">{isSigningUp ? 'Finalizar' : 'Entrar'}</button>
+              <button type="submit" disabled={isLoading} className="w-full bg-[#E11D48] text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-rose-600/20 flex items-center justify-center gap-2">
+                {isLoading ? <Loader2 className="animate-spin w-4 h-4" /> : (isSigningUp ? 'Finalizar' : 'Entrar')}
+              </button>
             </form>
             <button onClick={() => setIsSigningUp(!isSigningUp)} className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors">{isSigningUp ? 'Voltar' : 'Criar Conta'}</button>
           </div>
@@ -242,7 +265,7 @@ export default function App() {
   }
 
   // --- PAINEL GESTOR (ADMIN) ---
-  if (currentUser.role === 'admin') {
+  if (currentUser?.role === 'admin') {
     return (
       <div className="min-h-screen bg-[#09090b] text-zinc-100 pb-20">
         {isLoading && <Spinner />}
@@ -330,10 +353,10 @@ export default function App() {
         </div>
       </header>
       <main className="max-w-7xl mx-auto px-6 py-12">
-        <h1 className="text-4xl font-black mb-1 tracking-tighter uppercase">{currentUser.unit_name}</h1>
+        <h1 className="text-4xl font-black mb-1 tracking-tighter uppercase">{currentUser?.unit_name || 'Usuário'}</h1>
         <div className="flex items-center gap-2 mb-12">
           <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-          <p className="text-zinc-500 font-black uppercase tracking-widest text-[10px]">Filtrado: {currentUser.network_tag.replace('-', ' ')}</p>
+          <p className="text-zinc-500 font-black uppercase tracking-widest text-[10px]">Filtrado: {currentUser?.network_tag?.replace('-', ' ') || 'Geral'}</p>
         </div>
         
         {products.length === 0 ? (
@@ -382,7 +405,7 @@ export default function App() {
                     <span className="text-lg font-black text-white">R$ {cart.reduce((acc, item) => acc + (item.price * item.quantity), 0).toFixed(2)}</span>
                   </div>
                   <button onClick={() => { 
-                    let msg = `Olá! Unidade *${currentUser.unit_name}* (*${currentUser.network_tag}*):\n\n` + cart.map(i => `• ${i.name} - ${i.quantity}un`).join('\n');
+                    let msg = `Olá! Unidade *${currentUser?.unit_name || 'Loja'}* (*${currentUser?.network_tag || 'Geral'}*):\n\n` + cart.map(i => `• ${i.name} - ${i.quantity}un`).join('\n');
                     window.open(`https://wa.me/5517992198086?text=${encodeURIComponent(msg)}`, '_blank');
                   }} className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-emerald-600/20">Finalizar no WhatsApp</button>
                 </div>
