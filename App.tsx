@@ -214,7 +214,10 @@ export default function App() {
     try {
       let query = supabase.from('products').select('*').order('name');
       const { data: prodData } = await query;
-      if (prodData) setProducts(prodData);
+      if (prodData) {
+        // Ordenação alfabética consistente
+        setProducts(prodData.sort((a, b) => a.name.localeCompare(b.name)));
+      }
 
       let orderQuery = supabase.from('orders').select('*').order('created_at', { ascending: false });
       if (currentUser.role !== 'admin') {
@@ -233,11 +236,10 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
     
-    // Configuração robusta do Realtime para garantir que clientes vejam o que o gestor adiciona
+    // Configuração robusta do Realtime
     const channel = supabase.channel('global_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
-          // Se for INSERT, adicionamos diretamente ao estado se não formos o gestor (o gestor já atualizou otimisticamente)
-          // Mas para garantir consistência total, recarregar é mais seguro para clientes.
+          // Atualiza dados sempre que houver mudança, garantindo sincronia entre gestor e cliente
           fetchInitialData();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
@@ -387,6 +389,10 @@ export default function App() {
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    
+    // Tratamento defensivo para tamanhos
+    const safeSizes = Array.isArray(newProduct.available_sizes) ? newProduct.available_sizes : [];
+
     const payload = {
       name: newProduct.name,
       description: newProduct.description,
@@ -396,26 +402,23 @@ export default function App() {
       category: newProduct.category,
       min_order: parseInt(newProduct.min_order),
       production_days: parseInt(newProduct.production_days),
-      available_sizes: newProduct.available_sizes
+      available_sizes: safeSizes
     };
+
     try {
       let resultData;
       
-      // NOTA: Usamos .select() para garantir que o Supabase retorne o objeto criado/atualizado
-      // Isso permite atualização imediata do estado local sem esperar o refresh.
       if (editingId) {
          const { data, error } = await supabase.from('products').update(payload).eq('id', editingId).select();
          if (error) throw error;
          resultData = data[0];
-         
-         // Atualiza estado local imediatamente (Optimistic Update)
+         // Optimistic Update
          setProducts(prev => prev.map(p => p.id === editingId ? resultData : p));
       } else {
          const { data, error } = await supabase.from('products').insert([payload]).select();
          if (error) throw error;
          resultData = data[0];
-         
-         // Adiciona ao estado local imediatamente
+         // Optimistic Update
          setProducts(prev => [...prev, resultData].sort((a, b) => a.name.localeCompare(b.name)));
       }
       
@@ -426,7 +429,12 @@ export default function App() {
       setNewProduct({ name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
     } catch (err: any) { 
        console.error(err);
-       showToast("Erro ao salvar: " + err.message, "error"); 
+       // Mensagem de erro mais amigável para o usuário se for erro de coluna
+       if (err.message?.includes('available_sizes')) {
+         showToast("Erro: Execute o comando SQL fornecido para corrigir o banco.", "error");
+       } else {
+         showToast("Erro ao salvar: " + err.message, "error"); 
+       }
     }
     finally { setIsLoading(false); }
   };
@@ -436,7 +444,6 @@ export default function App() {
       try {
           const { error } = await supabase.from('products').delete().eq('id', id);
           if (error) throw error;
-          // Remove do estado local imediatamente
           setProducts(prev => prev.filter(p => p.id !== id));
           showToast("Produto removido com sucesso.", "success");
       } catch (err) {
@@ -480,7 +487,6 @@ export default function App() {
       setCep('');
       setIsPaymentOpen(false);
       setIsCartOpen(false);
-      // Realtime cuida do resto, mas chamamos por garantia
       fetchInitialData();
     } catch (err) {
       showToast("Erro ao processar pedido.", "error");
@@ -501,6 +507,8 @@ export default function App() {
   // --- RENDER ---
   if (isLoading && !currentUser) return <Spinner />;
 
+  // ... (REST OF THE RENDER CODE REMAINS EXACTLY THE SAME - SKIPPING TO END FOR BREVITY, THE LOGIC IS IN THE FUNCTIONS ABOVE)
+  
   // 1. AUTH FLOWS
   if (!currentUser) {
     return (
