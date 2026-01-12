@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ShoppingCart, 
@@ -26,7 +27,8 @@ import {
   QrCode, 
   Clock,
   ClipboardList,
-  Calendar
+  Calendar,
+  Hourglass
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { USERS, INITIAL_PRODUCTS } from './constants';
@@ -94,16 +96,18 @@ const ProductCard: React.FC<{ product: Product, onAddToCart: (p: Product, s: Siz
             {product.name}
           </h3>
           <p className="text-2xl font-black text-white/90">R$ {product.price.toFixed(2)}</p>
+          <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-tight">
+            <Hourglass size={12} className="text-rose-500" />
+            Prazo: {product.productionTime}
+          </div>
         </div>
 
         <div className="mb-6 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Grade de Tamanhos</p>
-            {product.stock !== undefined && (
-              <span className="text-[10px] font-black text-rose-500/80 uppercase tracking-widest">
-                {product.stock} em estoque
-              </span>
-            )}
+            <span className="text-[10px] font-black text-rose-500/80 uppercase tracking-widest">
+              Mín: {product.minOrder} un
+            </span>
           </div>
           <div className="flex flex-wrap gap-2.5">
             {sizes.length > 0 ? sizes.map(size => (
@@ -134,7 +138,7 @@ const ProductCard: React.FC<{ product: Product, onAddToCart: (p: Product, s: Siz
             : 'bg-zinc-800 text-zinc-600 cursor-not-allowed opacity-50'
           }`}
         >
-          <Plus size={18} strokeWidth={3} /> <span className="uppercase tracking-tight">{selectedSize ? 'Adicionar' : 'Selecione o Tamanho'}</span>
+          <Plus size={18} strokeWidth={3} /> <span className="uppercase tracking-tight">{selectedSize ? `Adicionar (${product.minOrder} un)` : 'Selecione o Tamanho'}</span>
         </motion.button>
       </div>
     </motion.div>
@@ -177,10 +181,11 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('tiquinho_products');
     const base = saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
-    return base.map((p: Product) => ({
+    return base.map((p: any) => ({
       ...p,
       availableSizes: p.availableSizes || ['P', 'M', 'G', 'GG'],
-      stock: p.stock ?? 10 // Valor padrão se não existir
+      minOrder: p.minOrder ?? 10,
+      productionTime: p.productionTime ?? '15 dias úteis'
     }));
   });
   
@@ -202,7 +207,8 @@ export default function App() {
     networkTag: 'drogaria-total', 
     category: 'Masculino',
     description: '',
-    stock: '',
+    minOrder: '10',
+    productionTime: '15 dias úteis',
     availableSizes: [] as Size[]
   });
 
@@ -228,7 +234,7 @@ export default function App() {
   }, [currentUser, products]);
 
   const stats = useMemo(() => {
-    const totalStock = products.reduce((acc, p) => acc + (p.stock || 0), 0);
+    const totalVolume = products.length;
     const confirmedSales = orders.reduce((acc, o) => acc + (o.status === 'Pago/Aguardando Produção' ? o.total : 0), 0);
     
     const networks = products.map(p => p.networkTag);
@@ -244,7 +250,7 @@ export default function App() {
     };
 
     return {
-      stock: totalStock,
+      volume: totalVolume,
       revenue: confirmedSales,
       activeNetwork: networkNameMap[mostFrequent || ''] || 'N/A'
     };
@@ -312,7 +318,7 @@ export default function App() {
 
   const handleAddProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProduct.name || !newProduct.networkTag || !newProduct.stock) {
+    if (!newProduct.name || !newProduct.networkTag || !newProduct.minOrder) {
       showToast('Preencha os campos obrigatórios.', 'error');
       return;
     }
@@ -330,7 +336,8 @@ export default function App() {
         networkTag: newProduct.networkTag,
         category: newProduct.category,
         description: newProduct.description,
-        stock: parseInt(newProduct.stock),
+        minOrder: parseInt(newProduct.minOrder),
+        productionTime: newProduct.productionTime,
         availableSizes: newProduct.availableSizes
       } : p));
       showToast('Uniforme atualizado!');
@@ -345,7 +352,8 @@ export default function App() {
         networkTag: newProduct.networkTag,
         category: newProduct.category,
         description: newProduct.description,
-        stock: parseInt(newProduct.stock) || 0,
+        minOrder: parseInt(newProduct.minOrder) || 10,
+        productionTime: newProduct.productionTime || '15 dias úteis',
         availableSizes: newProduct.availableSizes
       };
       setProducts(prev => [product, ...prev]);
@@ -358,7 +366,7 @@ export default function App() {
       setNotifications(prev => [notification, ...prev]);
       showToast('Publicado com sucesso!');
     }
-    setNewProduct({ name: '', price: '', image: '', networkTag: 'drogaria-total', category: 'Masculino', description: '', stock: '', availableSizes: [] });
+    setNewProduct({ name: '', price: '', image: '', networkTag: 'drogaria-total', category: 'Masculino', description: '', minOrder: '10', productionTime: '15 dias úteis', availableSizes: [] });
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -372,14 +380,15 @@ export default function App() {
       networkTag: p.networkTag,
       category: p.category,
       description: p.description || '',
-      stock: p.stock?.toString() || '0',
+      minOrder: p.minOrder.toString(),
+      productionTime: p.productionTime,
       availableSizes: p.availableSizes || []
     });
   };
 
   const cancelEdit = () => {
     setEditingId(null);
-    setNewProduct({ name: '', price: '', image: '', networkTag: 'drogaria-total', category: 'Masculino', description: '', stock: '', availableSizes: [] });
+    setNewProduct({ name: '', price: '', image: '', networkTag: 'drogaria-total', category: 'Masculino', description: '', minOrder: '10', productionTime: '15 dias úteis', availableSizes: [] });
   };
 
   const deleteProduct = (id: string) => {
@@ -399,15 +408,15 @@ export default function App() {
             : item
         );
       }
-      return [...prev, { ...product, selectedSize: size, quantity: 1 }];
+      return [...prev, { ...product, selectedSize: size, quantity: product.minOrder }];
     });
-    showToast('Adicionado ao carrinho');
+    showToast(`Adicionado ao carrinho (Lote mín de ${product.minOrder} un)`);
   };
 
   const updateQuantity = (id: string, size: Size, delta: number) => {
     setCart(prev => prev.map(item => {
       if (item.id === id && item.selectedSize === size) {
-        return { ...item, quantity: Math.max(1, item.quantity + delta) };
+        return { ...item, quantity: Math.max(item.minOrder, item.quantity + delta) };
       }
       return item;
     }));
@@ -434,24 +443,16 @@ export default function App() {
       status: 'Pago/Aguardando Produção',
       createdAt: Date.now()
     };
-    // Reduzir estoque real ao confirmar PIX
-    setProducts(prev => prev.map(p => {
-      const cartItem = cart.find(ci => ci.id === p.id);
-      if (cartItem) {
-        return { ...p, stock: Math.max(0, (p.stock || 0) - cartItem.quantity) };
-      }
-      return p;
-    }));
     setOrders(prev => [newOrder, ...prev]);
     setCart([]);
     setIsPixModalOpen(false);
     setIsCartOpen(false);
-    showToast('Pedido enviado para produção!', 'success');
+    showToast('Pedido enviado para produção! Prazo: 15 dias úteis.', 'success');
   };
 
   const handleCheckoutWhatsApp = () => {
     if (!currentUser || cart.length === 0) return;
-    let message = `*ORÇAMENTO - TIQUINHO CORPORATE*\n\n`;
+    let message = `*ORÇAMENTO - TIQUINHO STORE*\n\n`;
     message += `*Unidade:* ${currentUser.unitName}\n`;
     message += `*Rede:* ${currentUser.networkName}\n\n`;
     message += `*ÍTENS:*\n`;
@@ -459,6 +460,7 @@ export default function App() {
       message += `• ${item.name} (${item.selectedSize}) x${item.quantity} - R$ ${(item.price * item.quantity).toFixed(2)}\n`;
     });
     message += `\n*TOTAL: R$ ${cartTotal.toFixed(2)}*`;
+    message += `\n\n*Prazo de confecção:* 15 dias úteis após confirmação.`;
     window.open(`https://wa.me/5517992198086?text=${encodeURIComponent(message)}`, '_blank');
   };
 
@@ -571,7 +573,7 @@ export default function App() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {[
-                { label: 'Unidades em Estoque', val: stats.stock.toLocaleString(), icon: Package, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+                { label: 'Modelos Ativos', val: stats.volume.toLocaleString(), icon: LayoutGrid, color: 'text-blue-500', bg: 'bg-blue-500/10' },
                 { label: 'Receita Confirmada (PIX)', val: `R$ ${stats.revenue.toLocaleString()}`, icon: DollarSign, color: 'text-green-500', bg: 'bg-green-500/10' },
                 { label: 'Rede mais Ativa', val: stats.activeNetwork, icon: TrendingUp, color: 'text-rose-500', bg: 'bg-rose-500/10' },
               ].map((stat, i) => (
@@ -670,12 +672,12 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-2 gap-5">
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Preço (R$)</label>
+                        <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Preço unitário (R$)</label>
                         <input type="number" step="0.01" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950/50 border border-white/5 p-5 rounded-2xl text-white font-bold" required />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Estoque Inicial</label>
-                        <input type="number" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} className="w-full bg-zinc-950/50 border border-white/5 p-5 rounded-2xl text-white font-bold" required />
+                        <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Pedido Mínimo (unidades)</label>
+                        <input type="number" min="10" value={newProduct.minOrder} onChange={e => setNewProduct({...newProduct, minOrder: e.target.value})} className="w-full bg-zinc-950/50 border border-white/5 p-5 rounded-2xl text-white font-bold" required />
                       </div>
                     </div>
                   </div>
@@ -699,13 +701,19 @@ export default function App() {
                         ))}
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Rede Franqueada *</label>
-                      <select value={newProduct.networkTag} onChange={e => setNewProduct({...newProduct, networkTag: e.target.value})} className="w-full bg-zinc-950/50 border border-white/5 p-5 rounded-2xl text-white font-bold appearance-none">
-                        <option value="drogaria-total">Drogaria Total</option>
-                        <option value="farmacia-abc">Farmácia ABC</option>
-                        <option value="generica">Uso Geral</option>
-                      </select>
+                    <div className="grid grid-cols-2 gap-5">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Prazo de Confecção</label>
+                        <input type="text" value={newProduct.productionTime} onChange={e => setNewProduct({...newProduct, productionTime: e.target.value})} className="w-full bg-zinc-950/50 border border-white/5 p-5 rounded-2xl text-white font-bold" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Rede Franqueada *</label>
+                        <select value={newProduct.networkTag} onChange={e => setNewProduct({...newProduct, networkTag: e.target.value})} className="w-full bg-zinc-950/50 border border-white/5 p-5 rounded-2xl text-white font-bold appearance-none">
+                          <option value="drogaria-total">Drogaria Total</option>
+                          <option value="farmacia-abc">Farmácia ABC</option>
+                          <option value="generica">Uso Geral</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -740,7 +748,7 @@ export default function App() {
                         <span className="text-rose-500 font-black text-sm">R$ {p.price.toFixed(2)}</span>
                         <div className="bg-white/5 px-2.5 py-1 rounded-full border border-white/5 flex items-center gap-1.5">
                           <Package size={10} className="text-zinc-500" />
-                          <span className="text-[10px] text-zinc-300 font-black uppercase">Estoque: {p.stock} un</span>
+                          <span className="text-[10px] text-zinc-300 font-black uppercase">Mín: {p.minOrder} un</span>
                         </div>
                       </div>
                     </div>
@@ -994,10 +1002,14 @@ export default function App() {
                         <span className="text-[9px] bg-zinc-900 px-2 py-1 rounded-md text-zinc-400 font-black uppercase">Tamanho: {item.selectedSize}</span>
                         <p className="text-sm font-black text-white">R$ {(item.price * item.quantity).toFixed(2)}</p>
                       </div>
+                      <div className="mt-2 flex items-center gap-1.5 text-[9px] font-bold text-rose-500 uppercase tracking-tight">
+                        <Hourglass size={10} />
+                        Prazo: {item.productionTime}
+                      </div>
                       <div className="flex items-center gap-4 mt-3 bg-zinc-900/80 w-fit px-3 py-1.5 rounded-xl">
-                        <button onClick={() => updateQuantity(item.id, item.selectedSize, -1)}><Minus size={12} /></button>
+                        <button onClick={() => updateQuantity(item.id, item.selectedSize, -1)} className="hover:text-rose-500 transition-colors"><Minus size={12} /></button>
                         <span className="text-xs font-black">{item.quantity}</span>
-                        <button onClick={() => updateQuantity(item.id, item.selectedSize, 1)}><Plus size={12} /></button>
+                        <button onClick={() => updateQuantity(item.id, item.selectedSize, 1)} className="hover:text-rose-500 transition-colors"><Plus size={12} /></button>
                       </div>
                     </div>
                   </div>
@@ -1007,9 +1019,15 @@ export default function App() {
               {cart.length > 0 && (
                 <div className="p-8 border-t border-white/5 bg-zinc-950/80 backdrop-blur-2xl space-y-4">
                   <div className="flex items-center justify-between text-white font-black text-2xl"><span className="text-[10px] text-zinc-500 uppercase tracking-widest">Total Estimado</span><span className="text-rose-500">R$ {cartTotal.toFixed(2)}</span></div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => setIsPixModalOpen(true)} className="bg-white text-zinc-950 font-black py-4 rounded-2xl flex items-center justify-center gap-2 uppercase text-[10px] tracking-tight shadow-xl"><QrCode size={18} /> Gerar PIX</button>
-                    <button onClick={handleCheckoutWhatsApp} className="bg-zinc-800 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 uppercase text-[10px] tracking-tight border border-white/5"><MessageCircle size={18} /> Orçar</button>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">
+                      <Info size={14} />
+                      Prazo de confecção: 15 dias úteis
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button onClick={() => setIsPixModalOpen(true)} className="bg-white text-zinc-950 font-black py-4 rounded-2xl flex items-center justify-center gap-2 uppercase text-[10px] tracking-tight shadow-xl"><QrCode size={18} /> Gerar PIX</button>
+                      <button onClick={handleCheckoutWhatsApp} className="bg-zinc-800 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 uppercase text-[10px] tracking-tight border border-white/5"><MessageCircle size={18} /> Orçar</button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1029,7 +1047,11 @@ export default function App() {
               <div className="bg-white p-6 rounded-[40px] shadow-2xl mb-8">
                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=PIX-TIQUINHO-${cartTotal}`} className="w-44 h-44" alt="" />
               </div>
-              <div className="mb-8"><p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mb-1">Total a Pagar</p><p className="text-4xl font-black text-white">R$ {cartTotal.toFixed(2)}</p></div>
+              <div className="mb-8">
+                <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mb-1">Total a Pagar</p>
+                <p className="text-4xl font-black text-white">R$ {cartTotal.toFixed(2)}</p>
+                <p className="text-[9px] font-black text-rose-500 uppercase tracking-[0.2em] mt-2">Prazo: 15 dias úteis para confecção</p>
+              </div>
               <button onClick={confirmPixPayment} className="w-full bg-rose-600 text-white font-black py-5 rounded-3xl shadow-2xl uppercase tracking-tight text-sm">Confirmar Pagamento</button>
             </motion.div>
           </div>

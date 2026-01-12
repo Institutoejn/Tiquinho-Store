@@ -9,7 +9,8 @@ export interface Product {
   networkTag: string; // 'drogaria-total', 'farmacia-abc', 'generica', etc.
   category: string;
   description?: string;
-  stock?: number;
+  minOrder: number;
+  productionTime: string;
   availableSizes?: Size[];
 }
 

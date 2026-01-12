@@ -48,7 +48,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 89.90,
     image: 'https://images.unsplash.com/photo-1596755094514-f87e34085b2c?auto=format&fit=crop&q=80&w=400&h=500',
     networkTag: 'drogaria-total',
-    category: 'Masculino'
+    category: 'Masculino',
+    minOrder: 10,
+    productionTime: '15 dias úteis'
   },
   {
     id: 'dt-2',
@@ -56,7 +58,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 75.00,
     image: 'https://images.unsplash.com/photo-1554568218-0f1715e72254?auto=format&fit=crop&q=80&w=400&h=500',
     networkTag: 'drogaria-total',
-    category: 'Feminino'
+    category: 'Feminino',
+    minOrder: 10,
+    productionTime: '15 dias úteis'
   },
   {
     id: 'dt-3',
@@ -64,7 +68,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 199.00,
     image: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?auto=format&fit=crop&q=80&w=400&h=500',
     networkTag: 'drogaria-total',
-    category: 'Inverno'
+    category: 'Inverno',
+    minOrder: 10,
+    productionTime: '15 dias úteis'
   },
   {
     id: 'dt-4',
@@ -72,7 +78,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 45.00,
     image: 'https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&q=80&w=400&h=500',
     networkTag: 'drogaria-total',
-    category: 'Acessórios'
+    category: 'Acessórios',
+    minOrder: 10,
+    productionTime: '15 dias úteis'
   },
   // Genérica
   {
@@ -81,7 +89,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 110.00,
     image: 'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&q=80&w=400&h=500',
     networkTag: 'generica',
-    category: 'Operacional'
+    category: 'Operacional',
+    minOrder: 10,
+    productionTime: '15 dias úteis'
   },
   {
     id: 'gen-2',
@@ -89,7 +99,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 39.90,
     image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&q=80&w=400&h=500',
     networkTag: 'generica',
-    category: 'Básico'
+    category: 'Básico',
+    minOrder: 10,
+    productionTime: '15 dias úteis'
   }
 ];
 
