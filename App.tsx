@@ -42,6 +42,7 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [isSigningUp, setIsSigningUp] = useState(false);
+  const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
   const [formData, setFormData] = useState({ 
     email: '', password: '', unit_name: '', network_tag: 'drogaria-total', role: 'user' as 'user' | 'admin', adminKey: '' 
   });
@@ -173,7 +174,7 @@ export default function App() {
     e.preventDefault();
     setIsLoading(true);
     
-    if (formData.role === 'admin' && formData.adminKey !== 'TIQUINHO2026') {
+    if (authFlow === 'admin' && formData.adminKey !== 'TIQUINHO2026') {
       showToast("Chave Admin Inválida", "error");
       setIsLoading(false);
       return;
@@ -187,8 +188,8 @@ export default function App() {
         options: {
           data: {
             unit_name: formData.unit_name,
-            network_tag: formData.role === 'admin' ? 'admin' : formData.network_tag,
-            role: formData.role
+            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag,
+            role: authFlow === 'admin' ? 'admin' : 'user'
           }
         }
       });
@@ -247,40 +248,251 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
         <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-[#E11D48]/10 rounded-full blur-[120px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-[#E11D48]/5 rounded-full blur-[120px]" />
         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md z-10">
-          <div className="flex flex-col items-center mb-10"><Logo className="w-20 h-20 mb-4" /><h1 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.4em]">Tiquinho Corporate</h1></div>
-          <div className="glass p-10 rounded-[40px] shadow-2xl">
-            <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">{isSigningUp ? 'Acesso Novo' : 'Login Corporativo'}</h2>
-            <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
-              {isSigningUp && (
-                <div className="space-y-4 mb-4">
-                  <div className="flex p-1 bg-zinc-950 rounded-2xl border border-white/5 relative">
-                    <motion.div className="absolute inset-y-1 bg-[#E11D48] rounded-xl" animate={{ x: formData.role === 'admin' ? '100%' : '0%' }} transition={{ type: "spring", stiffness: 300, damping: 30 }} style={{ width: 'calc(50% - 4px)' }} />
-                    <button type="button" onClick={() => setFormData({...formData, role: 'user'})} className={`relative z-10 flex-1 py-2 text-[10px] font-black uppercase ${formData.role === 'user' ? 'text-white' : 'text-zinc-500'}`}>Franqueado</button>
-                    <button type="button" onClick={() => setFormData({...formData, role: 'admin'})} className={`relative z-10 flex-1 py-2 text-[10px] font-black uppercase ${formData.role === 'admin' ? 'text-white' : 'text-zinc-500'}`}>Gestor</button>
+        
+        <AnimatePresence mode="wait">
+          {/* TELA INICIAL - ESCOLHA DO TIPO DE USUÁRIO */}
+          {authFlow === 'initial' && (
+            <motion.div
+              key="initial"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md z-10"
+            >
+              <div className="flex flex-col items-center mb-10">
+                <Logo className="w-20 h-20 mb-4" />
+                <h1 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.4em]">Tiquinho Corporate</h1>
+                <p className="text-zinc-600 text-xs mt-2 text-center">Plataforma de Uniformes Corporativos</p>
+              </div>
+
+              <div className="space-y-4">
+                {/* BOTÃO GESTOR */}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setAuthFlow('admin')}
+                  className="w-full glass p-8 rounded-[40px] shadow-2xl hover:border-[#E11D48]/30 transition-all group"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-14 h-14 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#E11D48]/20 transition-colors">
+                      <ShieldCheck className="text-[#E11D48]" size={28} />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Gestor</h3>
+                      <p className="text-zinc-500 text-xs font-medium">Gerenciar catálogo e pedidos da rede</p>
+                    </div>
                   </div>
-                  <input type="text" placeholder="Nome da Unidade" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-                </div>
-              )}
-              <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-              <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-              {isSigningUp && formData.role === 'user' && (
-                <select value={formData.network_tag} onChange={e => setFormData({...formData, network_tag: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm appearance-none">
-                  <option value="drogaria-total">Drogaria Total</option>
-                  <option value="farmacia-abc">Farmácia ABC</option>
-                  <option value="generica">Rede Independente</option>
-                </select>
-              )}
-              <button type="submit" className="w-full bg-[#E11D48] text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-rose-600/20">
-                {isSigningUp ? 'Finalizar Cadastro' : 'Entrar no Portal'}
+                </motion.button>
+
+                {/* BOTÃO CLIENTE */}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setAuthFlow('client')}
+                  className="w-full glass p-8 rounded-[40px] shadow-2xl hover:border-[#E11D48]/30 transition-all group"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
+                      <ShoppingCart className="text-emerald-500" size={28} />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Cliente</h3>
+                      <p className="text-zinc-500 text-xs font-medium">Acessar catálogo e fazer pedidos</p>
+                    </div>
+                  </div>
+                </motion.button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* TELA LOGIN/CADASTRO - GESTOR (ADMIN) */}
+          {authFlow === 'admin' && (
+            <motion.div
+              key="admin"
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -50 }}
+              className="w-full max-w-md z-10"
+            >
+              <button
+                onClick={() => { setAuthFlow('initial'); setIsSigningUp(false); }}
+                className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                Voltar
               </button>
-            </form>
-            <button onClick={() => setIsSigningUp(!isSigningUp)} className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors">
-              {isSigningUp ? 'Já tenho conta' : 'Criar Conta Corporativa'}
-            </button>
-          </div>
-        </motion.div>
+
+              <div className="flex flex-col items-center mb-10">
+                <div className="w-16 h-16 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center mb-4">
+                  <ShieldCheck className="text-[#E11D48]" size={32} />
+                </div>
+                <h1 className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.4em]">Painel Gestor</h1>
+              </div>
+
+              <div className="glass p-10 rounded-[40px] shadow-2xl">
+                <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">
+                  {isSigningUp ? 'Criar Conta Gestor' : 'Login Gestor'}
+                </h2>
+
+                <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
+                  {isSigningUp && (
+                    <>
+                      <input
+                        type="text"
+                        placeholder="Nome da Empresa/Rede"
+                        value={formData.unit_name}
+                        onChange={e => setFormData({...formData, unit_name: e.target.value})}
+                        className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                        required
+                      />
+                      <div className="relative">
+                        <input
+                          type="password"
+                          placeholder="Chave de Acesso Administrativa"
+                          value={formData.adminKey}
+                          onChange={e => setFormData({...formData, adminKey: e.target.value})}
+                          className="w-full bg-zinc-900/50 border border-[#E11D48]/20 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                          required
+                        />
+                        <p className="text-[9px] text-zinc-600 mt-2 font-medium uppercase tracking-wider">
+                          * Solicite a chave com a equipe Tiquinho
+                        </p>
+                      </div>
+                    </>
+                  )}
+
+                  <input
+                    type="email"
+                    placeholder="E-mail Administrativo"
+                    value={formData.email}
+                    onChange={e => setFormData({...formData, email: e.target.value})}
+                    className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                    required
+                  />
+
+                  <input
+                    type="password"
+                    placeholder="Senha"
+                    value={formData.password}
+                    onChange={e => setFormData({...formData, password: e.target.value})}
+                    className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                    required
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-[#E11D48] text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-rose-600/20 hover:bg-[#BE123C] transition-colors disabled:opacity-50"
+                  >
+                    {isLoading ? 'PROCESSANDO...' : (isSigningUp ? 'CRIAR CONTA GESTOR' : 'ACESSAR PAINEL')}
+                  </button>
+                </form>
+
+                <button
+                  onClick={() => setIsSigningUp(!isSigningUp)}
+                  className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors"
+                >
+                  {isSigningUp ? 'Já tenho conta de gestor' : 'Criar nova conta gestor'}
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* TELA LOGIN/CADASTRO - CLIENTE */}
+          {authFlow === 'client' && (
+            <motion.div
+              key="client"
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -50 }}
+              className="w-full max-w-md z-10"
+            >
+              <button
+                onClick={() => { setAuthFlow('initial'); setIsSigningUp(false); }}
+                className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                Voltar
+              </button>
+
+              <div className="flex flex-col items-center mb-10">
+                <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center mb-4">
+                  <ShoppingCart className="text-emerald-500" size={32} />
+                </div>
+                <h1 className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.4em]">Portal Cliente</h1>
+              </div>
+
+              <div className="glass p-10 rounded-[40px] shadow-2xl">
+                <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">
+                  {isSigningUp ? 'Criar Conta Corporativa' : 'Login Corporativo'}
+                </h2>
+
+                <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
+                  {isSigningUp && (
+                    <>
+                      <input
+                        type="text"
+                        placeholder="Nome da Unidade/Franquia"
+                        value={formData.unit_name}
+                        onChange={e => setFormData({...formData, unit_name: e.target.value})}
+                        className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                        required
+                      />
+                      <select
+                        value={formData.network_tag}
+                        onChange={e => setFormData({...formData, network_tag: e.target.value})}
+                        className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm appearance-none cursor-pointer"
+                      >
+                        <option value="drogaria-total">Drogaria Total</option>
+                        <option value="farmacia-abc">Farmácia ABC</option>
+                        <option value="generica">Rede Independente</option>
+                      </select>
+                    </>
+                  )}
+
+                  <input
+                    type="email"
+                    placeholder="E-mail Corporativo"
+                    value={formData.email}
+                    onChange={e => setFormData({...formData, email: e.target.value})}
+                    className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                    required
+                  />
+
+                  <input
+                    type="password"
+                    placeholder="Senha"
+                    value={formData.password}
+                    onChange={e => setFormData({...formData, password: e.target.value})}
+                    className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                    required
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-emerald-500 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-emerald-600/20 hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                  >
+                    {isLoading ? 'PROCESSANDO...' : (isSigningUp ? 'CRIAR CONTA' : 'ACESSAR CATÁLOGO')}
+                  </button>
+                </form>
+
+                <button
+                  onClick={() => setIsSigningUp(!isSigningUp)}
+                  className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors"
+                >
+                  {isSigningUp ? 'Já tenho conta' : 'Criar nova conta corporativa'}
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
