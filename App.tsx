@@ -78,8 +78,15 @@ export default function App() {
   // Admin State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newProduct, setNewProduct] = useState({ 
-    name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', 
-    description: '', min_order: '10', production_days: '15'
+    name: '', 
+    price: '', 
+    image_url: '', 
+    network_tag: 'drogaria-total', 
+    category: 'Masculino', 
+    description: '', 
+    min_order: '10', 
+    production_days: '15',
+    available_sizes: [] as string[]
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -240,7 +247,8 @@ export default function App() {
       network_tag: newProduct.network_tag.toLowerCase().trim(),
       category: newProduct.category,
       min_order: parseInt(newProduct.min_order),
-      production_days: parseInt(newProduct.production_days)
+      production_days: parseInt(newProduct.production_days),
+      available_sizes: newProduct.available_sizes
     };
     try {
       if (editingId) await supabase.from('products').update(payload).eq('id', editingId);
@@ -251,7 +259,7 @@ export default function App() {
       
       await fetchInitialData();
       setEditingId(null);
-      setNewProduct({ name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', description: '', min_order: '10', production_days: '15' });
+      setNewProduct({ name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
     } catch (err) { showToast("Erro ao salvar", "error"); }
     finally { setIsLoading(false); }
   };
@@ -429,9 +437,50 @@ export default function App() {
                   <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Preço Unitário (R$)</label><input type="number" step="0.01" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors" required /></div>
                   <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Pedido Mínimo (Unidades)</label><div className="relative"><input type="number" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors text-center font-bold" required /><div className="absolute inset-y-0 right-4 flex items-center pointer-events-none"><Package size={14} className="text-[#E11D48]" /></div></div></div>
                 </div>
-                <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Grade de Tamanhos Disponíveis *</label><div className="flex gap-2 mb-2">{['P', 'M', 'G', 'GG', 'XG'].map(size => (<div key={size} className="flex-1 bg-zinc-950 border border-white/5 py-3 rounded-xl text-center text-xs font-bold text-zinc-400 cursor-not-allowed opacity-50">{size}</div>))}</div><div className="bg-zinc-950 border border-white/5 py-3 rounded-xl text-center text-xs font-bold text-zinc-400 cursor-not-allowed opacity-50 w-full">Único</div></div>
+                <div>
+                   <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Grade de Tamanhos Disponíveis *</label>
+                   <div className="flex gap-2 mb-2">
+                     {['P', 'M', 'G', 'GG', 'XG'].map(size => (
+                       <button 
+                        key={size} 
+                        type="button"
+                        onClick={() => {
+                          const sizes = newProduct.available_sizes.includes(size) 
+                            ? newProduct.available_sizes.filter(s => s !== size) 
+                            : [...newProduct.available_sizes, size];
+                          setNewProduct({...newProduct, available_sizes: sizes});
+                        }}
+                        className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold transition-all ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-white/20'}`}
+                       >
+                         {size}
+                       </button>
+                     ))}
+                   </div>
+                   <button 
+                    type="button"
+                    onClick={() => {
+                      const size = 'Único';
+                      const sizes = newProduct.available_sizes.includes(size) 
+                        ? newProduct.available_sizes.filter(s => s !== size) 
+                        : [...newProduct.available_sizes, size];
+                      setNewProduct({...newProduct, available_sizes: sizes});
+                    }}
+                    className={`w-full border py-3 rounded-xl text-center text-xs font-bold transition-all ${newProduct.available_sizes.includes('Único') ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-white/20'}`}
+                   >
+                     Único
+                   </button>
+                </div>
                 <div className="grid grid-cols-2 gap-6">
-                  <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Prazo de Confecção</label><div className="bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm font-bold flex items-center justify-between"><span>{newProduct.production_days} dias úteis</span></div></div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Prazo de Confecção (Dias Úteis)</label>
+                    <input 
+                      type="number" 
+                      value={newProduct.production_days} 
+                      onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} 
+                      className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors" 
+                      required 
+                    />
+                  </div>
                   <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Rede Franqueada *</label><select value={newProduct.network_tag} onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none appearance-none font-bold"><option value="drogaria-total">Drogaria Total</option><option value="farmacia-abc">Farmácia ABC</option><option value="generica">Uso Geral</option></select></div>
                 </div>
                 <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar Alterações' : 'Publicar e Notificar Rede'}</button>
@@ -451,7 +500,7 @@ export default function App() {
                     <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider mb-2">{p.network_tag}</p>
                     <div className="flex items-center gap-3"><span className="text-sm font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</span><span className="text-[9px] font-bold text-zinc-600 bg-zinc-950 px-2 py-1 rounded-lg border border-white/5 flex items-center gap-1"><Package size={10} /> MÍN: {p.min_order} UN</span></div>
                     <div className="flex gap-2 mt-3">
-                      <button onClick={() => { setEditingId(p.id); setNewProduct({ name: p.name, price: p.price.toString(), image_url: p.image_url, network_tag: p.network_tag, category: p.category, description: p.description || '', min_order: p.min_order.toString(), production_days: p.production_days.toString() }); window.scrollTo({ top: 400, behavior: 'smooth' }); }} className="flex-1 bg-zinc-800/80 hover:bg-zinc-800 py-2 rounded-xl text-[9px] uppercase font-black text-zinc-300 flex items-center justify-center gap-1 transition-colors"><MessageCircle size={10} className="rotate-90" /> Editar</button>
+                      <button onClick={() => { setEditingId(p.id); setNewProduct({ name: p.name, price: p.price.toString(), image_url: p.image_url, network_tag: p.network_tag, category: p.category, description: p.description || '', min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [] }); window.scrollTo({ top: 400, behavior: 'smooth' }); }} className="flex-1 bg-zinc-800/80 hover:bg-zinc-800 py-2 rounded-xl text-[9px] uppercase font-black text-zinc-300 flex items-center justify-center gap-1 transition-colors"><MessageCircle size={10} className="rotate-90" /> Editar</button>
                       <button onClick={async () => { if(confirm("Excluir?")) { await supabase.from('products').delete().eq('id', p.id); fetchInitialData(); } }} className="w-8 h-8 flex items-center justify-center bg-rose-950/30 text-rose-500 rounded-xl hover:bg-rose-950/50 transition-colors"><Trash2 size={14}/></button>
                     </div>
                   </div>
