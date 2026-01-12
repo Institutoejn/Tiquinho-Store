@@ -5,22 +5,21 @@ export interface Product {
   id: string;
   name: string;
   price: number;
-  image: string;
-  networkTag: string; // 'drogaria-total', 'farmacia-abc', 'generica', etc.
+  image_url: string; 
+  network_tag: string; 
   category: string;
   description?: string;
-  minOrder: number;
-  productionTime: string;
-  availableSizes?: Size[];
+  min_order: number;
+  production_days: number;
+  available_sizes?: Size[];
 }
 
 export interface User {
   id: string;
   email: string;
   password?: string;
-  networkName: string;
-  networkTag: string;
-  unitName: string;
+  network_tag: string;
+  unit_name: string;
   role: 'user' | 'admin';
 }
 
@@ -29,19 +28,12 @@ export interface CartItem extends Product {
   quantity: number;
 }
 
-export interface AppNotification {
-  id: string;
-  networkTag: string;
-  message: string;
-  createdAt: number;
-}
-
 export interface Order {
   id: string;
-  unitName: string;
-  networkName: string;
-  total: number;
-  items: CartItem[];
+  user_email: string;
+  unit_name: string;
+  order_details: any;
+  total_price: number;
   status: 'Pago/Aguardando Produção' | 'Pendente';
-  createdAt: number;
+  created_at: string;
 }
