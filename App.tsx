@@ -451,7 +451,8 @@ export default function App() {
       price: parseFloat(newProduct.price),
       image_url: newProduct.image_url,
       // Salva a rede selecionada do Dropdown (que veio do Banco)
-      network_tag: newProduct.network_tag,
+      // FIX: Adicionado trim() para evitar espaços acidentais no cadastro
+      network_tag: newProduct.network_tag.trim(),
       category: newProduct.category,
       min_order: parseInt(newProduct.min_order),
       production_days: parseInt(newProduct.production_days),
@@ -568,8 +569,15 @@ export default function App() {
 
   const filteredProducts = useMemo(() => {
     if (currentUser?.role === 'admin') return products;
-    // Filtragem exata: O que está no produto deve bater com o que está no usuário
-    return products.filter(p => p.network_tag === currentUser?.network_tag);
+    
+    // FIX: Filtragem Inteligente (Normalização)
+    // Converte para minúsculas e remove espaços para garantir o match
+    const userTag = currentUser?.network_tag?.toLowerCase().trim() || '';
+    
+    return products.filter(p => {
+        const productTag = p.network_tag?.toLowerCase().trim() || '';
+        return productTag === userTag;
+    });
   }, [products, currentUser]);
 
   const totalRevenue = useMemo(() => {
