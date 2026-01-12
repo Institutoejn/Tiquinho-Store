@@ -4,11 +4,65 @@ import {
   ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, Hourglass, Loader2, 
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
-  Minus, Copy, History, ChevronRight, Calendar
+  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
 import { supabase } from './supabaseClient';
+
+// --- PIX HELPER FUNCTIONS ---
+class PixPayload {
+  private merchantKey: string;
+  private merchantName: string;
+  private merchantCity: string;
+  private amount: string;
+  private txId: string;
+
+  constructor(key: string, name: string, city: string, amount: number, txId: string = '***') {
+    this.merchantKey = key;
+    this.merchantName = name;
+    this.merchantCity = city;
+    this.amount = amount.toFixed(2);
+    this.txId = txId;
+  }
+
+  private formatField(id: string, value: string): string {
+    const len = value.length.toString().padStart(2, '0');
+    return `${id}${len}${value}`;
+  }
+
+  private getCRC16(payload: string): string {
+    let crc = 0xFFFF;
+    for (let i = 0; i < payload.length; i++) {
+      crc ^= payload.charCodeAt(i) << 8;
+      for (let j = 0; j < 8; j++) {
+        if ((crc & 0x8000) !== 0) crc = (crc << 1) ^ 0x1021;
+        else crc = crc << 1;
+      }
+    }
+    return (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+  }
+
+  public generate(): string {
+    const payload = [
+      this.formatField('00', '01'), // Payload Format Indicator
+      this.formatField('26', // Merchant Account Information
+        this.formatField('00', 'br.gov.bcb.pix') +
+        this.formatField('01', this.merchantKey)
+      ),
+      this.formatField('52', '0000'), // Merchant Category Code
+      this.formatField('53', '986'),  // Transaction Currency (BRL)
+      this.formatField('54', this.amount), // Transaction Amount
+      this.formatField('58', 'BR'),   // Country Code
+      this.formatField('59', this.merchantName), // Merchant Name
+      this.formatField('60', this.merchantCity), // Merchant City
+      this.formatField('62', this.formatField('05', this.txId)), // Additional Data Field Template
+      '6304' // CRC16 ID + Length
+    ].join('');
+
+    return `${payload}${this.getCRC16(payload)}`;
+  }
+}
 
 // --- INTERFACES LOCAIS ---
 interface OrderDB {
@@ -70,6 +124,12 @@ export default function App() {
   
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Shipping State
+  const [cep, setCep] = useState('');
+  const [shippingCost, setShippingCost] = useState<number | null>(null);
+  const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
+  const [shippingAddress, setShippingAddress] = useState<{logradouro: string, localidade: string, uf: string} | null>(null);
   
   // Data State
   const [products, setProducts] = useState<Product[]>([]);
@@ -91,64 +151,72 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- INITIALIZATION ---
+  // --- INITIALIZATION & AUTH ---
   useEffect(() => {
-    const validateSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session) {
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        if (profile) {
-          const user: UserType = {
-            id: session.user.id,
-            email: session.user.email!,
-            unit_name: profile.unit_name,
-            network_tag: profile.network_tag,
-            role: profile.role
-          };
-          setCurrentUser(user);
-          localStorage.setItem('tiquinho_session', JSON.stringify(user));
+    let mounted = true;
+
+    const initAuth = async () => {
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) throw sessionError;
+
+        if (session) {
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (profile && !profileError) {
+            const user: UserType = {
+              id: session.user.id,
+              email: session.user.email!,
+              unit_name: profile.unit_name,
+              network_tag: profile.network_tag,
+              role: profile.role
+            };
+            if (mounted) {
+              setCurrentUser(user);
+              localStorage.setItem('tiquinho_session', JSON.stringify(user));
+            }
+          } else {
+             if (mounted) setCurrentUser(null);
+             await supabase.auth.signOut();
+          }
         }
-      } else {
-        localStorage.removeItem('tiquinho_session');
+      } catch (error) {
+        console.error("Erro de inicialização:", error);
+        if (mounted) setCurrentUser(null);
+      } finally {
+        if (mounted) setIsLoading(false);
       }
-      setIsLoading(false);
     };
-    validateSession();
     
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!session) {
-        setCurrentUser(null);
+    initAuth();
+    
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        if (mounted) setCurrentUser(null);
         localStorage.removeItem('tiquinho_session');
-      } else {
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        if (profile) {
-          const user: UserType = {
-            id: session.user.id,
-            email: session.user.email!,
-            unit_name: profile.unit_name,
-            network_tag: profile.network_tag,
-            role: profile.role
-          };
-          setCurrentUser(user);
-        }
       }
     });
-    return () => subscription.unsubscribe();
+    
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  // --- DATA FETCHING ---
+  // --- DATA FETCHING & REALTIME ---
   const fetchInitialData = async () => {
     if (!currentUser) return;
     try {
-      // Fetch Products
       let query = supabase.from('products').select('*').order('name');
       const { data: prodData } = await query;
       if (prodData) setProducts(prodData);
 
-      // Fetch Orders
       let orderQuery = supabase.from('orders').select('*').order('created_at', { ascending: false });
-      // Se for usuário comum, filtra pelo ID. Se for admin, pega tudo (já tratado pelo RLS ou lógica abaixo)
       if (currentUser.role !== 'admin') {
         orderQuery = orderQuery.eq('user_id', currentUser.id);
       }
@@ -158,12 +226,85 @@ export default function App() {
     } catch (err) { console.error('Sync error:', err); }
   };
 
-  useEffect(() => { fetchInitialData(); }, [currentUser]);
+  useEffect(() => { 
+    if(currentUser) fetchInitialData(); 
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const productsChannel = supabase.channel('public:products')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchInitialData())
+      .subscribe();
+    const ordersChannel = supabase.channel('public:orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchInitialData())
+      .subscribe();
+    return () => {
+      supabase.removeChannel(productsChannel);
+      supabase.removeChannel(ordersChannel);
+    };
+  }, [currentUser]);
 
   // --- HELPERS ---
   const showToast = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
-
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+
+  // --- SHIPPING LOGIC ---
+  const calculateShipping = async () => {
+    if (cep.length !== 8) {
+      showToast("CEP inválido. Digite 8 números.", "error");
+      return;
+    }
+    setIsCalculatingShipping(true);
+    try {
+      // Origem: 15080-325 (SP)
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const data = await response.json();
+      
+      if (data.erro) throw new Error("CEP não encontrado");
+
+      // Lógica de cálculo simplificada baseada na região
+      // Como origem é SP:
+      let cost = 0;
+      if (data.uf === 'SP') {
+        cost = 25.90; // Frete Estadual
+      } else if (['RJ', 'MG', 'ES', 'PR', 'SC', 'RS'].includes(data.uf)) {
+        cost = 45.90; // Regiões Próximas
+      } else {
+        cost = 78.50; // Demais regiões
+      }
+
+      setShippingCost(cost);
+      setShippingAddress({
+        logradouro: data.logradouro,
+        localidade: data.localidade,
+        uf: data.uf
+      });
+      showToast("Frete calculado com sucesso!", "success");
+
+    } catch (error) {
+      showToast("Erro ao calcular frete. Verifique o CEP.", "error");
+      setShippingCost(null);
+      setShippingAddress(null);
+    } finally {
+      setIsCalculatingShipping(false);
+    }
+  };
+
+  // --- PIX LOGIC ---
+  const getPixCode = () => {
+    const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+    const total = subtotal + (shippingCost || 0);
+    
+    // CNPJ Tiquinho: 53424027000178
+    const pix = new PixPayload(
+      '53424027000178',
+      'TIQUINHO UNIFORMES',
+      'SAO JOSE RIO PRETO',
+      total,
+      `PED${Date.now().toString().slice(-6)}`
+    );
+    return pix.generate();
+  };
 
   // --- AUTH ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -228,14 +369,17 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    setIsLoading(true);
     await supabase.auth.signOut();
     setCurrentUser(null);
     setAuthFlow('initial');
     setCart([]);
+    setShippingCost(null);
+    setCep('');
     localStorage.removeItem('tiquinho_session');
+    setIsLoading(false);
   };
 
-  // --- ADMIN ACTIONS ---
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -256,7 +400,6 @@ export default function App() {
       
       const rede = newProduct.network_tag.replace('-', ' ').toUpperCase();
       showToast(editingId ? "Produto atualizado com sucesso!" : `Produto publicado e rede ${rede} notificada!`);
-      
       await fetchInitialData();
       setEditingId(null);
       setNewProduct({ name: '', price: '', image_url: '', network_tag: 'drogaria-total', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
@@ -264,12 +407,10 @@ export default function App() {
     finally { setIsLoading(false); }
   };
 
-  // --- CART & ORDER ACTIONS ---
   const updateQuantity = (index: number, delta: number) => {
     const newCart = [...cart];
     newCart[index].quantity += delta;
     if (newCart[index].quantity < newCart[index].min_order) {
-      // If quantity drops below min_order, user might want to remove, but let's enforce min order or remove
        if(confirm(`A quantidade mínima é ${newCart[index].min_order}. Deseja remover o item?`)) {
           newCart.splice(index, 1);
        } else {
@@ -282,7 +423,8 @@ export default function App() {
   const handleFinalizeOrder = async () => {
     if (!currentUser) return;
     setIsLoading(true);
-    const total = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+    const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+    const total = subtotal + (shippingCost || 0);
     
     try {
       const { error } = await supabase.from('orders').insert([{
@@ -295,12 +437,13 @@ export default function App() {
       }]);
 
       if (error) throw error;
-
       showToast("Pagamento confirmado! Pedido enviado para produção.", "success");
       setCart([]);
+      setShippingCost(null);
+      setCep('');
       setIsPaymentOpen(false);
       setIsCartOpen(false);
-      await fetchInitialData(); // Refresh orders
+      fetchInitialData();
     } catch (err) {
       showToast("Erro ao processar pedido.", "error");
     } finally {
@@ -308,7 +451,6 @@ export default function App() {
     }
   };
 
-  // --- FILTERS ---
   const filteredProducts = useMemo(() => {
     if (currentUser?.role === 'admin') return products;
     return products.filter(p => p.network_tag === currentUser?.network_tag);
@@ -319,7 +461,6 @@ export default function App() {
   }, [orders]);
 
   // --- RENDER ---
-
   if (isLoading && !currentUser) return <Spinner />;
 
   // 1. AUTH FLOWS
@@ -419,7 +560,7 @@ export default function App() {
             </div>
           </section>
 
-          {/* FORMULÁRIO (Igual ao anterior) */}
+          {/* FORMULÁRIO */}
           <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
             <div className="absolute left-0 top-0 w-1 h-full bg-[#E11D48]" />
             <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Publicar Novo Modelo</h2>
@@ -501,7 +642,7 @@ export default function App() {
                     <div className="flex items-center gap-3"><span className="text-sm font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</span><span className="text-[9px] font-bold text-zinc-600 bg-zinc-950 px-2 py-1 rounded-lg border border-white/5 flex items-center gap-1"><Package size={10} /> MÍN: {p.min_order} UN</span></div>
                     <div className="flex gap-2 mt-3">
                       <button onClick={() => { setEditingId(p.id); setNewProduct({ name: p.name, price: p.price.toString(), image_url: p.image_url, network_tag: p.network_tag, category: p.category, description: p.description || '', min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [] }); window.scrollTo({ top: 400, behavior: 'smooth' }); }} className="flex-1 bg-zinc-800/80 hover:bg-zinc-800 py-2 rounded-xl text-[9px] uppercase font-black text-zinc-300 flex items-center justify-center gap-1 transition-colors"><MessageCircle size={10} className="rotate-90" /> Editar</button>
-                      <button onClick={async () => { if(confirm("Excluir?")) { await supabase.from('products').delete().eq('id', p.id); fetchInitialData(); } }} className="w-8 h-8 flex items-center justify-center bg-rose-950/30 text-rose-500 rounded-xl hover:bg-rose-950/50 transition-colors"><Trash2 size={14}/></button>
+                      <button onClick={async () => { if(confirm("Excluir?")) { await supabase.from('products').delete().eq('id', p.id); } }} className="w-8 h-8 flex items-center justify-center bg-rose-950/30 text-rose-500 rounded-xl hover:bg-rose-950/50 transition-colors"><Trash2 size={14}/></button>
                     </div>
                   </div>
                 </div>
@@ -543,7 +684,6 @@ export default function App() {
       <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between border-b border-white/5">
         <div className="flex items-center gap-4">
           <Logo />
-          {/* Rede / Unidade Pill */}
           <div className="hidden md:flex bg-zinc-900/50 border border-white/5 rounded-full px-4 py-2 items-center gap-2">
             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
             <span className="font-bold text-zinc-100 text-xs">{currentUser?.network_tag.replace('-', ' ').toUpperCase()}</span>
@@ -555,7 +695,6 @@ export default function App() {
           <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-3 text-zinc-500 relative hover:text-white transition-colors">
             <Bell size={20} />
             <span className="absolute top-3 right-3 w-2 h-2 bg-rose-500 rounded-full animate-pulse shadow-rose-500/50" />
-            {/* Notification Popup */}
             <AnimatePresence>
               {isNotificationsOpen && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute top-full right-0 mt-2 w-64 bg-zinc-950 border border-white/10 rounded-2xl shadow-2xl p-4 z-50">
@@ -647,15 +786,64 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              
               {cart.length > 0 && (
                 <div className="p-8 border-t border-white/5 bg-zinc-950/80 space-y-4">
-                  <div className="flex justify-between items-center mb-4 px-2">
-                    <span className="text-[10px] font-black uppercase text-zinc-500">Subtotal</span>
-                    <span className="text-xl font-black text-white">R$ {cart.reduce((acc, item) => acc + (item.price * item.quantity), 0).toFixed(2)}</span>
+                  {/* CALCULO DE FRETE */}
+                  <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5 space-y-3">
+                    <label className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block">Calcular Frete (CEP)</label>
+                    <div className="flex gap-2">
+                       <input 
+                         type="text" 
+                         value={cep} 
+                         onChange={(e) => setCep(e.target.value.replace(/\D/g, '').slice(0, 8))} 
+                         placeholder="00000-000" 
+                         className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#E11D48]/50 outline-none"
+                       />
+                       <button 
+                         onClick={calculateShipping}
+                         disabled={isCalculatingShipping}
+                         className="bg-[#E11D48] px-4 rounded-xl text-white font-bold text-xs hover:bg-[#be123c] disabled:opacity-50"
+                       >
+                         {isCalculatingShipping ? <Loader2 className="animate-spin" size={14}/> : 'OK'}
+                       </button>
+                    </div>
+                    {shippingAddress && (
+                      <div className="flex items-center gap-2 text-emerald-500 text-[10px] font-bold uppercase tracking-wider">
+                         <MapPin size={10} />
+                         <span>{shippingAddress.localidade}/{shippingAddress.uf}</span>
+                      </div>
+                    )}
                   </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center px-2">
+                      <span className="text-[10px] font-black uppercase text-zinc-500">Subtotal</span>
+                      <span className="text-sm font-bold text-zinc-400">R$ {cart.reduce((acc, item) => acc + (item.price * item.quantity), 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-2">
+                      <span className="text-[10px] font-black uppercase text-zinc-500">Frete</span>
+                      <span className="text-sm font-bold text-zinc-400">{shippingCost !== null ? `R$ ${shippingCost.toFixed(2)}` : '--'}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-2 border-t border-white/5 pt-2">
+                      <span className="text-[10px] font-black uppercase text-white">Total Final</span>
+                      <span className="text-xl font-black text-[#E11D48]">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</span>
+                    </div>
+                  </div>
+
                   <button onClick={() => setIsCartOpen(false)} className="w-full bg-zinc-800 text-zinc-300 py-4 rounded-2xl font-black uppercase text-[9px] tracking-widest hover:bg-zinc-700 transition-colors mb-2">Continuar Comprando</button>
                   <div className="grid grid-cols-1 gap-3">
-                    <button onClick={() => { setIsCartOpen(false); setIsPaymentOpen(true); }} className="bg-[#E11D48] text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 tracking-widest hover:bg-[#be123c] transition-colors">
+                    <button 
+                      onClick={() => { 
+                         if(shippingCost === null) {
+                            showToast("Calcule o frete antes de finalizar", "error");
+                            return;
+                         }
+                         setIsCartOpen(false); 
+                         setIsPaymentOpen(true); 
+                      }} 
+                      className="bg-[#E11D48] text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 tracking-widest hover:bg-[#be123c] transition-colors"
+                    >
                       <QrCode size={14}/> PAGAR COM PIX
                     </button>
                   </div>
@@ -679,12 +867,14 @@ export default function App() {
                     <p className="text-zinc-500 text-xs mb-8">Escaneie o código abaixo para finalizar seu pedido.</p>
                     
                     <div className="bg-white p-4 rounded-3xl mb-8">
-                      {/* Simulação visual de QR Code */}
-                      <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=TIQUINHO-STORE-ORDER-${Date.now()}`} alt="QR Code" className="w-48 h-48 mix-blend-multiply" />
+                      {/* GERAÇÃO REAL DO QR CODE PIX */}
+                      <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getPixCode())}`} alt="QR Code PIX" className="w-48 h-48 mix-blend-multiply" />
                     </div>
+                    
+                    <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-4">Total: {formatCurrency(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0))}</p>
 
                     <div className="flex gap-3 w-full">
-                       <button className="flex-1 bg-zinc-900 text-zinc-300 py-4 rounded-2xl font-black uppercase text-[9px] tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-800"><Copy size={14}/> Copiar Código</button>
+                       <button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Código PIX Copiado!", "success"); }} className="flex-1 bg-zinc-900 text-zinc-300 py-4 rounded-2xl font-black uppercase text-[9px] tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-800"><Copy size={14}/> Copiar Código</button>
                        <button onClick={handleFinalizeOrder} className="flex-1 bg-emerald-500 text-white py-4 rounded-2xl font-black uppercase text-[9px] tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-600 shadow-lg shadow-emerald-500/20">{isLoading ? <Loader2 className="animate-spin" size={14}/> : 'Confirmar Pagamento'}</button>
                     </div>
                   </div>
@@ -728,7 +918,6 @@ export default function App() {
                            </div>
                            
                            <div className="space-y-3 mb-6">
-                              {/* Simple preview of first item, usually map all */}
                               {(order.items as any[]).map((item: any, idx: number) => (
                                  <div key={idx} className="flex justify-between items-center text-sm">
                                     <span className="font-medium text-zinc-300"><span className="font-bold text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded text-[10px] mr-2">{item.quantity}x</span> {item.name} <span className="text-zinc-600">({item.selectedSize})</span></span>
