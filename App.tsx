@@ -5,7 +5,7 @@ import {
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
   Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown,
-  Building2, Phone, User, Mail, Lock, Search, Send, Check
+  Building2, Phone, User, Mail, Lock, Search, Send, Check, AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -106,6 +106,7 @@ export default function App() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
+  const [orderError, setOrderError] = useState(false); // Novo estado para controlar msg de erro
   const [whatsappLink, setWhatsappLink] = useState('');
   
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
@@ -248,10 +249,12 @@ export default function App() {
   const handleFinalizeOrder = async () => {
     if (!currentUser) return;
     setIsLoading(true);
+    setOrderError(false); // Reset error state
+
     const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (shippingCost || 0);
-    
-    // PREPARA A MENSAGEM DO WHATSAPP ANTES (Para fallback)
     const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
+    
+    // Mensagem base (Sucesso)
     let msg = `*NOVO PEDIDO (Via Site)* 🚀\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens:*\n${itemsList}\n\n💰 *Total:* R$ ${total.toFixed(2)}`;
     
     try {
@@ -265,7 +268,6 @@ export default function App() {
         status: 'Pendente'
       }]).select();
 
-      // Se der erro no banco, LANÇA ERRO para cair no catch e usar WhatsApp
       if (error) throw error;
       
       const orderId = data && data[0] ? data[0].id.slice(0, 8).toUpperCase() : 'APP';
@@ -273,21 +275,29 @@ export default function App() {
       
       setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`);
       
-      // SUCESSO: ABRE MODAL DE SUCESSO PADRÃO
-      setIsPaymentOpen(false); setIsCartOpen(false); setIsOrderSuccessOpen(true);
-      setCart([]); setShippingCost(null);
+      // SUCESSO PURO
+      setIsPaymentOpen(false); 
+      setIsCartOpen(false); 
+      setIsOrderSuccessOpen(true);
+      setCart([]); 
+      setShippingCost(null);
       
-    } catch (err) { 
-      // FALLBACK: SE O BANCO FALHAR, NÃO TRAVA O USUÁRIO
-      console.error("Erro banco, indo para WhatsApp:", err);
-      msg += `\n\n⚠️ *Nota:* O pedido não pôde ser salvo no histórico do site devido a um erro de conexão, mas segue o resumo para processamento manual.`;
+    } catch (err: any) { 
+      // ERRO NO BANCO DE DADOS
+      console.error("Erro banco, ativando modo manual:", err);
       
-      const waUrl = `https://wa.me/551732167854?text=${encodeURIComponent(msg)}`;
+      // Prepara mensagem de erro para o WhatsApp
+      msg += `\n\n⚠️ *Nota:* O pedido não pôde ser salvo no histórico do site devido a um erro de conexão/servidor, mas segue o resumo para processamento manual.`;
       
-      // Abre WhatsApp direto
-      window.open(waUrl, '_blank');
-      showToast("Erro de conexão. Redirecionando para WhatsApp...", "error");
+      setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`);
+      
+      // NÃO redireciona automaticamente (window.open removido)
+      // Abre a modal de sucesso, mas com indicador de erro visual
+      setOrderError(true);
       setIsPaymentOpen(false);
+      setIsCartOpen(false); 
+      setIsOrderSuccessOpen(true); // Exibe modal para o usuário decidir clicar
+      showToast("Erro ao salvar histórico, finalize via WhatsApp.", "error");
     } finally { 
       setIsLoading(false); 
     }
@@ -678,10 +688,21 @@ export default function App() {
       <AnimatePresence>
         {isOrderSuccessOpen && (
            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6">
-              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-zinc-950 border border-[#E11D48]/20 rounded-[40px] max-w-sm w-full p-10 text-center relative shadow-2xl shadow-rose-900/20">
-                 <div className="w-24 h-24 bg-[#E11D48] rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl shadow-rose-500/30"><CheckCircle2 className="text-white" size={48} /></div>
-                 <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Pedido Registrado!</h2>
-                 <p className="text-zinc-400 text-sm mb-8">Seu pedido foi salvo no sistema como <strong>Pendente</strong>. O envio será iniciado assim que o gestor confirmar o pagamento.</p>
+              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className={`bg-zinc-950 border ${orderError ? 'border-amber-500/20 shadow-amber-900/20' : 'border-[#E11D48]/20 shadow-rose-900/20'} rounded-[40px] max-w-sm w-full p-10 text-center relative shadow-2xl`}>
+                 <div className={`w-24 h-24 ${orderError ? 'bg-amber-500' : 'bg-[#E11D48]'} rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl ${orderError ? 'shadow-amber-500/30' : 'shadow-rose-500/30'}`}>
+                    {orderError ? <AlertTriangle className="text-white" size={48} /> : <CheckCircle2 className="text-white" size={48} />}
+                 </div>
+                 
+                 <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">
+                    {orderError ? 'Erro de Sincronização' : 'Pedido Registrado!'}
+                 </h2>
+                 
+                 <p className="text-zinc-400 text-sm mb-8">
+                    {orderError 
+                      ? 'Não conseguimos salvar no histórico automático devido a uma falha de conexão. Por favor, finalize enviando o comprovante manualmente.' 
+                      : 'Seu pedido foi salvo no sistema como Pendente. O envio será iniciado assim que o gestor confirmar o pagamento.'}
+                 </p>
+                 
                  <button onClick={() => { window.open(whatsappLink, '_blank'); setIsOrderSuccessOpen(false); }} className="w-full bg-[#25D366] hover:bg-[#1da851] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-3"><Send size={18} /> ENVIAR COMPROVANTE WHATSAPP</button>
                  <button onClick={() => setIsOrderSuccessOpen(false)} className="mt-6 text-zinc-600 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors">Fechar</button>
               </motion.div>

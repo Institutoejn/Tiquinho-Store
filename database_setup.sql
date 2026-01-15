@@ -9,48 +9,35 @@ CREATE TABLE IF NOT EXISTS public.orders (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. CORREÇÃO DO ERRO PGRST204 (IMPORTANTE)
--- Se a tabela já existia de testes anteriores, ela não tinha essas colunas.
--- Estes comandos forçam a adição das colunas sem apagar os dados.
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS network_tag TEXT;
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS unit_name TEXT;
+-- 2. ADIÇÃO SEGURA DE COLUNAS (Executa mesmo se a tabela já existir)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='network_tag') THEN
+        ALTER TABLE public.orders ADD COLUMN network_tag TEXT;
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='unit_name') THEN
+        ALTER TABLE public.orders ADD COLUMN unit_name TEXT;
+    END IF;
+END $$;
 
--- 3. Função de novos usuários (mantém busca correta no schema)
+-- 3. Ajuste de função trigger (segurança)
 ALTER FUNCTION public.handle_new_user() SET search_path = public;
 
--- 4. Habilita segurança (RLS)
+-- 4. Habilita RLS
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 
--- 5. Limpa políticas antigas para evitar conflitos/erros
+-- 5. Limpa políticas antigas
 DROP POLICY IF EXISTS "Users can view own orders" ON public.orders;
 DROP POLICY IF EXISTS "Admins can view all orders" ON public.orders;
 DROP POLICY IF EXISTS "Users can insert orders" ON public.orders;
 DROP POLICY IF EXISTS "Admins can update orders" ON public.orders;
 
--- 6. Recria as Políticas de Segurança
--- Usuário vê seus próprios pedidos
-CREATE POLICY "Users can view own orders" 
-ON public.orders FOR SELECT 
-USING (auth.uid() = user_id);
+-- 6. Recria Políticas
+CREATE POLICY "Users can view own orders" ON public.orders FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert orders" ON public.orders FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Admins can view all orders" ON public.orders FOR SELECT USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
+CREATE POLICY "Admins can update orders" ON public.orders FOR UPDATE USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
 
--- Usuário pode INSERIR pedidos (Essencial para o checkout funcionar)
-CREATE POLICY "Users can insert orders" 
-ON public.orders FOR INSERT 
-WITH CHECK (auth.uid() = user_id);
-
--- Admin vê tudo
-CREATE POLICY "Admins can view all orders" 
-ON public.orders FOR SELECT 
-USING (
-  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
-);
-
--- Admin atualiza status
-CREATE POLICY "Admins can update orders" 
-ON public.orders FOR UPDATE
-USING (
-  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'
-);
-
--- 7. Força atualização do Cache do Supabase (para reconhecer as novas colunas imediatamente)
+-- 7. IMPORTANTE: Força o Supabase a reconhecer as mudanças imediatamente
 NOTIFY pgrst, 'reload schema';
