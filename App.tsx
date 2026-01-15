@@ -4,7 +4,8 @@ import {
   ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, Hourglass, Loader2, 
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
-  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown
+  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown,
+  Building2, Phone, User, Mail, Lock, Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -126,9 +127,26 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
+  
+  // FORMULÁRIO EXPANDIDO PARA CLIENTES
   const [formData, setFormData] = useState({ 
-    email: '', password: '', unit_name: '', network_tag: '', role: 'user' as 'user' | 'admin', adminKey: '' 
+    email: '', 
+    password: '', 
+    unit_name: '', 
+    network_tag: '', 
+    role: 'user' as 'user' | 'admin', 
+    adminKey: '',
+    // Novos campos de cadastro
+    cnpj: '',
+    phone: '',
+    contact_name: '',
+    cep: '',
+    address_street: '',
+    address_city: '',
+    address_state: ''
   });
+
+  const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false); // Estado para tela de "Verifique seu email"
 
   // App State
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -332,6 +350,32 @@ export default function App() {
     }
   };
 
+  // --- REGISTRATION ADDRESS LOOKUP ---
+  const handleAddressLookup = async () => {
+    const rawCep = formData.cep.replace(/\D/g, '');
+    if (rawCep.length !== 8) {
+      showToast("CEP inválido. Digite 8 números.", "error");
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${rawCep}/json/`);
+      const data = await response.json();
+      if (data.erro) throw new Error("CEP não encontrado");
+
+      setFormData(prev => ({
+        ...prev,
+        address_street: data.logradouro,
+        address_city: data.localidade,
+        address_state: data.uf
+      }));
+    } catch (err) {
+      showToast("Erro ao buscar CEP.", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // --- PIX LOGIC ---
   const getPixCode = () => {
     const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
@@ -374,7 +418,12 @@ export default function App() {
       localStorage.setItem('tiquinho_session', JSON.stringify(user));
       showToast(`Olá, ${profile.unit_name}!`);
     } catch (err: any) {
-      showToast(err.message || 'Erro ao fazer login', 'error');
+      // TRATAMENTO ESPECÍFICO DE EMAIL NÃO CONFIRMADO
+      if (err.message && (err.message.includes("Email not confirmed") || err.message.includes("not verified"))) {
+        showToast("Por favor, acesse seu e-mail e confirme o cadastro antes de entrar.", "error");
+      } else {
+        showToast(err.message || 'Erro ao fazer login', 'error');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -383,37 +432,71 @@ export default function App() {
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    if (authFlow === 'admin' && formData.adminKey !== 'TIQUINHO2026') {
-      showToast("Chave Admin Inválida", "error");
-      setIsLoading(false);
-      return;
-    }
     
-    // Validação básica para impedir rede vazia
-    if (authFlow !== 'admin' && !formData.network_tag.trim()) {
-      showToast("Informe o nome da sua Rede/Franquia", "error");
+    // Validação ADMIN (Mantida igual)
+    if (authFlow === 'admin') {
+       if (formData.adminKey !== 'TIQUINHO2026') {
+         showToast("Chave Admin Inválida", "error");
+         setIsLoading(false);
+         return;
+       }
+       // Lógica de cadastro Admin (Simplificada, sem meta dados extras por enquanto)
+       try {
+         const { error } = await supabase.auth.signUp({
+           email: formData.email.toLowerCase().trim(),
+           password: formData.password,
+           options: {
+             data: {
+               unit_name: formData.unit_name,
+               network_tag: 'admin',
+               role: 'admin'
+             }
+           }
+         });
+         if (error) throw error;
+         setIsRegistrationSuccess(true);
+       } catch (err: any) {
+         showToast(err.message || "Erro no cadastro", "error");
+       } finally {
+         setIsLoading(false);
+       }
+       return;
+    }
+
+    // Validação CLIENTE (Formulário Completo)
+    if (!formData.network_tag.trim() || !formData.cnpj || !formData.phone) {
+      showToast("Preencha todos os campos obrigatórios (*)", "error");
       setIsLoading(false);
       return;
     }
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email: formData.email.toLowerCase().trim(),
         password: formData.password,
         options: {
+          emailRedirectTo: window.location.origin, // Garante retorno ao site
           data: {
+            // Dados padrão da tabela profiles
             unit_name: formData.unit_name,
-            // AQUI ESTÁ A MÁGICA: Salva exatamente o que o usuário digitou (ex: "Droga Raia")
-            // Apenas removemos espaços extras nas pontas
-            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag.trim(),
-            role: authFlow === 'admin' ? 'admin' : 'user'
+            network_tag: formData.network_tag.trim(),
+            role: 'user',
+            // Dados Extras (Meta-dados)
+            cnpj: formData.cnpj,
+            phone: formData.phone,
+            contact_name: formData.contact_name,
+            address: `${formData.address_street}, ${formData.address_city}-${formData.address_state}, CEP: ${formData.cep}`
           }
         }
       });
-      if (authError) throw authError;
-      showToast("Conta criada! Verifique seu email e faça login.", "success");
-      setIsSigningUp(false);
-      setFormData({ email: '', password: '', unit_name: '', network_tag: '', role: 'user', adminKey: '' });
+      if (error) throw error;
+      
+      // SUCESSO: Mostra tela de verificação em vez de logar
+      setIsRegistrationSuccess(true);
+      
+      // Limpa dados sensíveis
+      setFormData(prev => ({ ...prev, password: '', adminKey: '' }));
+
     } catch (err: any) {
       showToast(err.message || "Erro no cadastro", "error");
     } finally {
@@ -648,48 +731,108 @@ export default function App() {
           )}
 
           {(authFlow === 'admin' || authFlow === 'client') && (
-            <motion.div key="auth" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className="w-full max-w-md z-10">
-              <button onClick={() => { setAuthFlow('initial'); setIsSigningUp(false); }} className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>Voltar</button>
-              <div className="flex flex-col items-center mb-10">
-                <div className={`w-16 h-16 ${authFlow === 'admin' ? 'bg-[#E11D48]/10' : 'bg-emerald-500/10'} rounded-2xl flex items-center justify-center mb-4`}>
-                    {authFlow === 'admin' ? <ShieldCheck className="text-[#E11D48]" size={32} /> : <ShoppingCart className="text-emerald-500" size={32} />}
+            <motion.div key="auth" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className={`w-full ${isSigningUp && authFlow === 'client' ? 'max-w-4xl' : 'max-w-md'} z-10 transition-all duration-500`}>
+              <button onClick={() => { setAuthFlow('initial'); setIsSigningUp(false); setIsRegistrationSuccess(false); }} className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>Voltar</button>
+              
+              {/* TELA DE SUCESSO DO CADASTRO - VERIFICAÇÃO DE EMAIL */}
+              {isRegistrationSuccess ? (
+                <div className="glass p-10 rounded-[40px] shadow-2xl text-center">
+                  <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Mail size={40} className="text-emerald-500" />
+                  </div>
+                  <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">Verifique seu E-mail</h2>
+                  <p className="text-zinc-400 text-sm mb-6">Enviamos um link de confirmação para <strong>{formData.email}</strong>.<br/>Por favor, clique no link para ativar sua conta corporativa.</p>
+                  <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5 text-xs text-zinc-500 mb-8">
+                    <p>Após confirmar, retorne a esta página e faça login com seus dados.</p>
+                  </div>
+                  <button onClick={() => { setIsRegistrationSuccess(false); setIsSigningUp(false); }} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors">
+                    Voltar para Login
+                  </button>
                 </div>
-                <h1 className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.4em]">{authFlow === 'admin' ? 'Painel Gestor' : 'Portal Cliente'}</h1>
-              </div>
-              <div className="glass p-10 rounded-[40px] shadow-2xl">
-                <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">{isSigningUp ? 'Criar Conta' : 'Login Acesso'}</h2>
-                <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
-                  {isSigningUp && (<>
-                    <input type="text" placeholder={authFlow === 'admin' ? "Nome da Empresa/Rede" : "Nome da Unidade/Franquia"} value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                    {authFlow === 'admin' ? (
-                       <div className="relative"><input type="password" placeholder="Chave de Acesso Administrativa" value={formData.adminKey} onChange={e => setFormData({...formData, adminKey: e.target.value})} className="w-full bg-zinc-900/50 border border-[#E11D48]/20 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /><p className="text-[9px] text-zinc-600 mt-2 font-medium uppercase tracking-wider">* Solicite a chave com a equipe Tiquinho</p></div>
-                    ) : (
-                       // NOVO INPUT DINÂMICO PARA REDE
-                       <div className="relative">
-                         <input 
-                           type="text" 
-                           list="network-suggestions"
-                           placeholder="Nome da Rede / Franquia (Ex: Droga Raia)" 
-                           value={formData.network_tag} 
-                           onChange={e => setFormData({...formData, network_tag: e.target.value})} 
-                           className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
-                           required
-                         />
-                         <datalist id="network-suggestions">
-                           {/* Sugestões baseadas nas redes já existentes */}
-                           {availableNetworks.map(net => (
-                             <option key={net} value={net} />
-                           ))}
-                         </datalist>
-                       </div>
-                    )}
-                  </>)}
-                  <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                  <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                  <button type="submit" disabled={isLoading} className={`w-full ${authFlow === 'admin' ? 'bg-[#E11D48] hover:bg-[#BE123C]' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors disabled:opacity-50`}>{isLoading ? 'PROCESSANDO...' : (isSigningUp ? 'CRIAR CONTA' : 'ACESSAR PAINEL')}</button>
-                </form>
-                <button onClick={() => setIsSigningUp(!isSigningUp)} className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors">{isSigningUp ? 'Já tenho conta' : 'Criar nova conta'}</button>
-              </div>
+              ) : (
+                <>
+                  <div className="flex flex-col items-center mb-10">
+                    <div className={`w-16 h-16 ${authFlow === 'admin' ? 'bg-[#E11D48]/10' : 'bg-emerald-500/10'} rounded-2xl flex items-center justify-center mb-4`}>
+                        {authFlow === 'admin' ? <ShieldCheck className="text-[#E11D48]" size={32} /> : <ShoppingCart className="text-emerald-500" size={32} />}
+                    </div>
+                    <h1 className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.4em]">{authFlow === 'admin' ? 'Painel Gestor' : 'Portal Cliente'}</h1>
+                  </div>
+                  
+                  <div className="glass p-10 rounded-[40px] shadow-2xl">
+                    <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">{isSigningUp ? (authFlow === 'admin' ? 'Criar Conta Admin' : 'Cadastro Corporativo') : 'Login Acesso'}</h2>
+                    
+                    <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
+                      
+                      {/* --- FORMULÁRIO DE CADASTRO (SIGN UP) --- */}
+                      {isSigningUp ? (
+                         authFlow === 'admin' ? (
+                            // FORMULÁRIO ADMIN SIMPLIFICADO
+                            <>
+                              <input type="text" placeholder="Nome da Empresa/Rede" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                              <div className="relative"><input type="password" placeholder="Chave de Acesso Administrativa" value={formData.adminKey} onChange={e => setFormData({...formData, adminKey: e.target.value})} className="w-full bg-zinc-900/50 border border-[#E11D48]/20 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /><p className="text-[9px] text-zinc-600 mt-2 font-medium uppercase tracking-wider">* Solicite a chave com a equipe Tiquinho</p></div>
+                              <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                              <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                            </>
+                         ) : (
+                            // FORMULÁRIO CLIENTE COMPLETO (GRID)
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-1 border-b border-white/5 pb-1">Dados da Empresa</div>
+                                
+                                <div className="relative">
+                                  <input 
+                                    type="text" 
+                                    list="network-suggestions"
+                                    placeholder="Rede / Franquia *" 
+                                    value={formData.network_tag} 
+                                    onChange={e => setFormData({...formData, network_tag: e.target.value})} 
+                                    className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
+                                    required
+                                  />
+                                  <datalist id="network-suggestions">
+                                    {availableNetworks.map(net => <option key={net} value={net} />)}
+                                  </datalist>
+                                  <Search className="absolute right-4 top-4 text-zinc-600 pointer-events-none" size={16} />
+                                </div>
+
+                                <input type="text" placeholder="Nome da Unidade (Ex: Unidade Centro) *" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                
+                                <input type="text" placeholder="CNPJ (Somente Números) *" value={formData.cnpj} onChange={e => setFormData({...formData, cnpj: e.target.value.replace(/\D/g, '').slice(0, 14)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                
+                                <input type="text" placeholder="Telefone / WhatsApp *" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+
+                                <input type="text" placeholder="Nome do Responsável" value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" />
+
+                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Endereço de Entrega</div>
+                                
+                                <div className="relative">
+                                    <input type="text" placeholder="CEP *" value={formData.cep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} onBlur={handleAddressLookup} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                    <Search className="absolute right-4 top-4 text-zinc-600 pointer-events-none" size={16} />
+                                </div>
+                                
+                                <input type="text" placeholder="Cidade" value={formData.address_city} readOnly className="w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
+                                
+                                <input type="text" placeholder="Logradouro" value={formData.address_street} readOnly className="md:col-span-2 w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
+
+                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Dados de Acesso</div>
+
+                                <input type="email" placeholder="Seu melhor E-mail *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                <input type="password" placeholder="Crie uma Senha *" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                            </div>
+                         )
+                      ) : (
+                        // --- FORMULÁRIO DE LOGIN (PADRÃO) ---
+                        <>
+                           <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                           <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                        </>
+                      )}
+
+                      <button type="submit" disabled={isLoading} className={`w-full ${authFlow === 'admin' ? 'bg-[#E11D48] hover:bg-[#BE123C]' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors disabled:opacity-50 mt-6`}>{isLoading ? 'PROCESSANDO...' : (isSigningUp ? 'FINALIZAR CADASTRO' : 'ACESSAR PAINEL')}</button>
+                    </form>
+                    <button onClick={() => { setIsSigningUp(!isSigningUp); setFormData(prev => ({...prev, email: '', password: ''})); }} className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors">{isSigningUp ? 'Já tenho conta' : 'Criar nova conta'}</button>
+                  </div>
+                </>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1106,6 +1249,54 @@ export default function App() {
               )}
             </motion.aside>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL DE PAGAMENTO PIX (O QUE ESTAVA FALTANDO) */}
+      <AnimatePresence>
+        {isPaymentOpen && (
+           <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
+               <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-sm w-full relative shadow-2xl flex flex-col overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#E11D48] to-transparent" />
+                  
+                  <div className="p-8 text-center border-b border-white/5">
+                     <div className="w-16 h-16 bg-[#E11D48]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <QrCode className="text-[#E11D48]" size={32} />
+                     </div>
+                     <h2 className="text-xl font-black text-white uppercase tracking-tighter mb-1">Pagamento Pix</h2>
+                     <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Escaneie ou Copie o Código</p>
+                  </div>
+
+                  <div className="p-8 bg-white flex flex-col items-center justify-center gap-4">
+                     <div className="bg-white p-2 rounded-xl border-4 border-zinc-100">
+                        {/* GERAÇÃO VISUAL DO QR CODE USANDO API PUBLICA SEGURA */}
+                        <img 
+                           src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getPixCode())}`} 
+                           alt="QR Code Pix" 
+                           className="w-48 h-48 mix-blend-multiply"
+                        />
+                     </div>
+                     <p className="text-zinc-950 font-black text-2xl">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</p>
+                  </div>
+
+                  <div className="p-6 bg-zinc-900/50 border-t border-white/5 space-y-4">
+                     <div>
+                        <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-2 text-center">Pix Copia e Cola</p>
+                        <div className="flex gap-2">
+                           <input type="text" readOnly value={getPixCode()} className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 text-[10px] text-zinc-400 font-mono outline-none" />
+                           <button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Código Pix copiado!", "success"); }} className="bg-zinc-800 hover:bg-zinc-700 text-white p-3 rounded-xl transition-colors"><Copy size={16} /></button>
+                        </div>
+                     </div>
+                     
+                     <button onClick={handleFinalizeOrder} className="w-full bg-[#E11D48] hover:bg-[#be123c] text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-600/20 transition-all flex items-center justify-center gap-2">
+                        <CheckCircle2 size={16} /> Confirmar Pagamento Enviado
+                     </button>
+                     <button onClick={() => setIsPaymentOpen(false)} className="w-full text-zinc-500 hover:text-white py-2 text-[10px] font-bold uppercase tracking-widest transition-colors">Cancelar</button>
+                  </div>
+               </motion.div>
+            </motion.div>
+           </>
         )}
       </AnimatePresence>
 
