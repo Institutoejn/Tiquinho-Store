@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
 import { supabase } from './supabaseClient';
 
-// --- PIX HELPER FUNCTIONS ---
+// --- PIX HELPER ---
 class PixPayload {
   private merchantKey: string;
   private merchantName: string;
@@ -28,69 +28,42 @@ class PixPayload {
   }
 
   private normalizeString(str: string, limit: number): string {
-    return str
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") 
-      .replace(/[^a-zA-Z0-9 ]/g, "")   
-      .toUpperCase()
-      .substring(0, limit)
-      .trim();
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 ]/g, "").toUpperCase().substring(0, limit).trim();
   }
-
-  private formatField(id: string, value: string): string {
-    const len = value.length.toString().padStart(2, '0');
-    return `${id}${len}${value}`;
-  }
-
+  private formatField(id: string, value: string): string { const len = value.length.toString().padStart(2, '0'); return `${id}${len}${value}`; }
   private getCRC16(payload: string): string {
     let crc = 0xFFFF;
     for (let i = 0; i < payload.length; i++) {
       crc ^= payload.charCodeAt(i) << 8;
-      for (let j = 0; j < 8; j++) {
-        if ((crc & 0x8000) !== 0) {
-          crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
-        } else {
-          crc = (crc << 1) & 0xFFFF;
-        }
-      }
+      for (let j = 0; j < 8; j++) { if ((crc & 0x8000) !== 0) crc = ((crc << 1) ^ 0x1021) & 0xFFFF; else crc = (crc << 1) & 0xFFFF; }
     }
     return (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
   }
-
   public generate(): string {
     const payload = [
       this.formatField('00', '01'),
-      this.formatField('26',
-        this.formatField('00', 'br.gov.bcb.pix') +
-        this.formatField('01', this.merchantKey)
-      ),
-      this.formatField('52', '0000'),
-      this.formatField('53', '986'), 
-      this.formatField('54', this.amount),
-      this.formatField('58', 'BR'),   
-      this.formatField('59', this.merchantName),
-      this.formatField('60', this.merchantCity), 
-      this.formatField('62', this.formatField('05', this.txId)), 
-      '6304' 
+      this.formatField('26', this.formatField('00', 'br.gov.bcb.pix') + this.formatField('01', this.merchantKey)),
+      this.formatField('52', '0000'), this.formatField('53', '986'), this.formatField('54', this.amount),
+      this.formatField('58', 'BR'), this.formatField('59', this.merchantName), this.formatField('60', this.merchantCity), 
+      this.formatField('62', this.formatField('05', this.txId)), '6304' 
     ].join('');
-
     return `${payload}${this.getCRC16(payload)}`;
   }
 }
 
-// --- INTERFACES LOCAIS ---
+// --- INTERFACES ---
 interface OrderDB {
   id: string;
   user_id: string;
   unit_name: string;
   network_tag: string;
-  items: CartItem[]; // Mapeado do JSONB
+  items: CartItem[];
   total_amount: number;
   status: string;
   created_at: string;
 }
 
-// --- UI COMPONENTS ---
+// --- COMPONENTS ---
 const Logo = ({ className = "w-10 h-10" }: { className?: string }) => (
   <div className={`${className} bg-[#E11D48] rounded-2xl flex items-center justify-center shadow-lg shadow-rose-600/30 select-none border border-white/10`}>
     <span className="text-2xl font-black text-white italic tracking-tighter -skew-x-6">T</span>
@@ -99,18 +72,13 @@ const Logo = ({ className = "w-10 h-10" }: { className?: string }) => (
 
 const Spinner = () => (
   <div className="fixed inset-0 z-[300] bg-[#09090b] flex flex-col items-center justify-center">
-    <div className="relative">
-      <div className="w-16 h-16 border-4 border-[#E11D48]/20 border-t-[#E11D48] rounded-full animate-spin"></div>
-    </div>
+    <div className="w-16 h-16 border-4 border-[#E11D48]/20 border-t-[#E11D48] rounded-full animate-spin"></div>
     <p className="mt-6 text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Sincronizando</p>
   </div>
 );
 
 const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error', onClose: () => void }) => {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 3000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
+  useEffect(() => { const timer = setTimeout(onClose, 3000); return () => clearTimeout(timer); }, [onClose]);
   return (
     <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
       className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-[150] flex items-center gap-3 px-6 py-4 rounded-3xl shadow-2xl glass border-white/10 ${type === 'success' ? 'text-white' : 'bg-rose-600 text-white'}`}>
@@ -121,30 +89,17 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
 };
 
 export default function App() {
-  // Auth & User State
+  // --- STATE ---
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
   
   const [formData, setFormData] = useState({ 
-    email: '', 
-    password: '', 
-    unit_name: '', 
-    network_tag: '', 
-    role: 'user' as 'user' | 'admin', 
-    adminKey: '',
-    cnpj: '',
-    phone: '',
-    contact_name: '',
-    cep: '',
-    address_street: '',
-    address_city: '',
-    address_state: ''
+    email: '', password: '', unit_name: '', network_tag: '', role: 'user' as 'user' | 'admin', 
+    adminKey: '', cnpj: '', phone: '', contact_name: '', cep: '', address_street: '', address_city: '', address_state: ''
   });
-
   const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false);
 
-  // App State
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
@@ -154,389 +109,196 @@ export default function App() {
   const [whatsappLink, setWhatsappLink] = useState('');
   
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
-  
   const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Shipping State
+  // Shipping
   const [cep, setCep] = useState('');
   const [shippingCost, setShippingCost] = useState<number | null>(null);
   const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
   const [shippingAddress, setShippingAddress] = useState<{logradouro: string, localidade: string, uf: string} | null>(null);
   
-  // Data State
+  // Data
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<OrderDB[]>([]);
   
-  // Admin State
+  // Admin Form
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newProduct, setNewProduct] = useState({ 
-    name: '', 
-    price: '', 
-    image_url: '', 
-    network_tag: '', 
-    category: 'Masculino', 
-    description: '', 
-    min_order: '10', 
-    production_days: '15',
-    available_sizes: [] as string[]
+    name: '', price: '', image_url: '', network_tag: '', category: 'Masculino', description: '', 
+    min_order: '10', production_days: '15', available_sizes: [] as string[]
   });
-  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- INITIALIZATION & AUTH ---
+  // --- AUTH & INIT ---
   useEffect(() => {
     let mounted = true;
-
     const initAuth = async () => {
       try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        
-        if (sessionError) throw sessionError;
-
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
         if (session) {
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-
-          if (profile && !profileError) {
-            const user: UserType = {
-              id: session.user.id,
-              email: session.user.email!,
-              unit_name: profile.unit_name,
-              network_tag: profile.network_tag,
-              role: profile.role
-            };
-            if (mounted) {
-              setCurrentUser(user);
-              localStorage.setItem('tiquinho_session', JSON.stringify(user));
-            }
-          } else {
-             if (mounted) setCurrentUser(null);
-             await supabase.auth.signOut();
-          }
+          const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+          if (profile) {
+            const user: UserType = { id: session.user.id, email: session.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role };
+            if (mounted) { setCurrentUser(user); localStorage.setItem('tiquinho_session', JSON.stringify(user)); }
+          } else { if (mounted) setCurrentUser(null); await supabase.auth.signOut(); }
         }
-      } catch (error) {
-        console.error("Erro de inicialização:", error);
-        if (mounted) setCurrentUser(null);
-      } finally {
-        if (mounted) setIsLoading(false);
-      }
+      } catch (err) { console.error(err); if (mounted) setCurrentUser(null); } 
+      finally { if (mounted) setIsLoading(false); }
     };
-    
     initAuth();
-    
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT' || !session) {
-        if (mounted) setCurrentUser(null);
-        localStorage.removeItem('tiquinho_session');
-      }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+       if (!session && mounted) { setCurrentUser(null); localStorage.removeItem('tiquinho_session'); }
     });
-    
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    return () => { mounted = false; subscription.unsubscribe(); };
   }, []);
 
-  // --- DATA FETCHING & REALTIME ---
+  // --- DATA SYNC ---
   const fetchInitialData = async () => {
     if (!currentUser) return;
     try {
-      // 1. Fetch Produtos
-      let query = supabase.from('products').select('*').order('name');
-      const { data: prodData } = await query;
+      const { data: prodData } = await supabase.from('products').select('*').order('name');
       if (prodData) setProducts(prodData.sort((a, b) => a.name.localeCompare(b.name)));
 
-      // 2. Fetch Pedidos (Lógica de Role corrigida)
       let orderQuery = supabase.from('orders').select('*').order('created_at', { ascending: false });
-      
-      // Se NÃO for admin, filtra apenas os pedidos do próprio usuário
-      if (currentUser.role !== 'admin') {
-        orderQuery = orderQuery.eq('user_id', currentUser.id);
-      }
-      
-      const { data: orderData, error: orderError } = await orderQuery;
-      
-      if (orderError) {
-        console.error("Erro ao buscar pedidos:", orderError);
-      } else if (orderData) {
-        setOrders(orderData);
-      }
+      if (currentUser.role !== 'admin') orderQuery = orderQuery.eq('user_id', currentUser.id);
+      const { data: orderData } = await orderQuery;
+      if (orderData) setOrders(orderData);
 
-      // 3. Fetch Redes Únicas (Para Admin)
       if (currentUser.role === 'admin') {
-          const networksSet = new Set<string>();
-          const { data: profilesData } = await supabase.from('profiles').select('network_tag').neq('role', 'admin');
-          if (profilesData) profilesData.forEach(p => p.network_tag && networksSet.add(p.network_tag));
-          const { data: productsData } = await supabase.from('products').select('network_tag');
-          if (productsData) productsData.forEach(p => p.network_tag && networksSet.add(p.network_tag));
-          const uniqueNetworks = Array.from(networksSet).filter(Boolean).sort();
-          setAvailableNetworks(uniqueNetworks);
+          const nets = new Set<string>();
+          const { data: profs } = await supabase.from('profiles').select('network_tag').neq('role', 'admin');
+          profs?.forEach(p => p.network_tag && nets.add(p.network_tag));
+          setAvailableNetworks(Array.from(nets).sort());
       }
-
-    } catch (err) { console.error('Sync error:', err); }
+    } catch (err) { console.error(err); }
   };
 
-  useEffect(() => { 
-    if(currentUser) fetchInitialData(); 
-  }, [currentUser]);
+  useEffect(() => { if(currentUser) fetchInitialData(); }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
-    const channel = supabase.channel('global_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchInitialData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchInitialData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchInitialData())
+    const ch = supabase.channel('app_db')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchInitialData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchInitialData)
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabase.removeChannel(ch); };
   }, [currentUser]);
 
-  // --- HELPERS ---
+  // --- LOGIC ---
   const showToast = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
-  // --- SHIPPING LOGIC ---
   const calculateShipping = async () => {
-    if (cep.length !== 8) { showToast("CEP inválido. Digite 8 números.", "error"); return; }
+    if (cep.length !== 8) return showToast("CEP inválido", "error");
     setIsCalculatingShipping(true);
     try {
-      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-      const data = await response.json();
-      if (data.erro) throw new Error("CEP não encontrado");
-
-      let cost = 0;
-      if (data.uf === 'SP') cost = 25.90;
-      else if (['RJ', 'MG', 'ES', 'PR', 'SC', 'RS'].includes(data.uf)) cost = 45.90;
-      else cost = 78.50;
-
+      const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const data = await res.json();
+      if (data.erro) throw new Error();
+      let cost = data.uf === 'SP' ? 25.90 : 78.50;
       setShippingCost(cost);
       setShippingAddress({ logradouro: data.logradouro, localidade: data.localidade, uf: data.uf });
       showToast("Frete calculado!", "success");
-    } catch (error) {
-      showToast("Erro ao calcular frete.", "error");
-      setShippingCost(null);
-    } finally { setIsCalculatingShipping(false); }
-  };
-
-  const handleAddressLookup = async () => {
-    const rawCep = formData.cep.replace(/\D/g, '');
-    if (rawCep.length !== 8) return;
-    setIsLoading(true);
-    try {
-      const response = await fetch(`https://viacep.com.br/ws/${rawCep}/json/`);
-      const data = await response.json();
-      if (!data.erro) {
-        setFormData(prev => ({ ...prev, address_street: data.logradouro, address_city: data.localidade, address_state: data.uf }));
-      }
-    } catch (err) {} finally { setIsLoading(false); }
+    } catch { showToast("Erro no CEP", "error"); setShippingCost(null); }
+    finally { setIsCalculatingShipping(false); }
   };
 
   const getPixCode = () => {
-    const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-    const total = subtotal + (shippingCost || 0);
-    const pix = new PixPayload('53424027000178', 'TIQUINHO UNIFORMES', 'SAO JOSE RIO PRETO', total, `PED${Date.now().toString().slice(-6)}`);
-    return pix.generate();
+    const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (shippingCost || 0);
+    return new PixPayload('53424027000178', 'TIQUINHO UNIFORMES', 'SAO JOSE RIO PRETO', total, `PED${Date.now().toString().slice(-4)}`).generate();
   };
 
-  // --- AUTH ACTIONS ---
+  // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
+    e.preventDefault(); setIsLoading(true);
     try {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: formData.email.toLowerCase().trim(),
-        password: formData.password,
-      });
-      if (authError) throw authError;
-      
-      const { data: profile } = await supabase.from('profiles').select('*').eq('id', authData.user.id).single();
-      if (profile) {
-        const user: UserType = { id: authData.user.id, email: authData.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role };
-        setCurrentUser(user);
-        localStorage.setItem('tiquinho_session', JSON.stringify(user));
-        showToast(`Olá, ${profile.unit_name}!`);
-      }
-    } catch (err: any) {
-      if (err.message && err.message.includes("Email not confirmed")) {
-        showToast("Verifique seu e-mail antes de entrar.", "error");
-      } else {
-        showToast("Erro ao fazer login", "error");
-      }
-    } finally { setIsLoading(false); }
+      const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email.trim(), password: formData.password });
+      if (error) throw error;
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
+      setCurrentUser({ id: data.user.id, email: data.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
+    } catch (err: any) { showToast(err.message, "error"); }
+    finally { setIsLoading(false); }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    if (authFlow === 'admin' && formData.adminKey !== 'TIQUINHO2026') {
-         showToast("Chave Admin Inválida", "error");
-         setIsLoading(false); return;
-    }
-    if (authFlow !== 'admin' && (!formData.network_tag.trim() || !formData.cnpj || !formData.phone)) {
-      showToast("Preencha campos obrigatórios (*)", "error");
-      setIsLoading(false); return;
-    }
-
+    e.preventDefault(); setIsLoading(true);
+    if (authFlow === 'admin' && formData.adminKey !== 'TIQUINHO2026') { setIsLoading(false); return showToast("Chave inválida", "error"); }
     try {
       const { error } = await supabase.auth.signUp({
-        email: formData.email.toLowerCase().trim(),
-        password: formData.password,
+        email: formData.email.trim(), password: formData.password,
         options: {
-          emailRedirectTo: window.location.origin,
           data: {
             unit_name: formData.unit_name,
             network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag.trim(),
             role: authFlow === 'admin' ? 'admin' : 'user',
-            cnpj: formData.cnpj,
-            phone: formData.phone,
-            contact_name: formData.contact_name,
-            address: `${formData.address_street}, ${formData.address_city}-${formData.address_state}, CEP: ${formData.cep}`
+            cnpj: formData.cnpj, phone: formData.phone, contact_name: formData.contact_name,
+            address: `${formData.address_street}, ${formData.address_city}-${formData.address_state}`
           }
         }
       });
       if (error) throw error;
       setIsRegistrationSuccess(true);
-      setFormData(prev => ({ ...prev, password: '', adminKey: '' }));
-    } catch (err: any) {
-      showToast(err.message || "Erro no cadastro", "error");
-    } finally { setIsLoading(false); }
-  };
-
-  const handleLogout = async () => {
-    setIsLoading(true);
-    await supabase.auth.signOut();
-    setCurrentUser(null);
-    setAuthFlow('initial');
-    setCart([]);
-    localStorage.removeItem('tiquinho_session');
-    setIsLoading(false);
-  };
-
-  // --- PRODUCT MANAGEMENT ---
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    const safeSizes = Array.isArray(newProduct.available_sizes) ? newProduct.available_sizes : [];
-    const payload = {
-      name: newProduct.name, description: newProduct.description, price: parseFloat(newProduct.price),
-      image_url: newProduct.image_url, network_tag: newProduct.network_tag.trim(), category: newProduct.category,
-      min_order: parseInt(newProduct.min_order), production_days: parseInt(newProduct.production_days), available_sizes: safeSizes
-    };
-
-    try {
-      if (editingId) {
-         await supabase.from('products').update(payload).eq('id', editingId);
-      } else {
-         await supabase.from('products').insert([payload]);
-      }
-      showToast(editingId ? "Produto atualizado!" : "Produto publicado!");
-      setEditingId(null);
-      setNewProduct({ name: '', price: '', image_url: '', network_tag: '', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
-    } catch (err) { showToast("Erro ao salvar produto.", "error"); }
+    } catch (err: any) { showToast(err.message, "error"); }
     finally { setIsLoading(false); }
   };
 
-  const handleDeleteProduct = async (id: string) => {
-      if(!confirm("Tem certeza que deseja excluir?")) return;
-      try {
-          await supabase.from('products').delete().eq('id', id);
-          setProducts(prev => prev.filter(p => p.id !== id));
-          showToast("Produto removido.", "success");
-      } catch (err) { showToast("Erro ao excluir.", "error"); }
-  };
-
-  const updateQuantity = (index: number, delta: number) => {
-    const newCart = [...cart];
-    newCart[index].quantity += delta;
-    if (newCart[index].quantity < newCart[index].min_order) {
-       if(confirm(`Remover item do carrinho?`)) newCart.splice(index, 1);
-       else newCart[index].quantity = newCart[index].min_order;
-    }
-    setCart(newCart);
-  };
-
-  // --- ORDER MANAGEMENT ---
   const handleFinalizeOrder = async () => {
     if (!currentUser) return;
     setIsLoading(true);
-    const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-    const total = subtotal + (shippingCost || 0);
+    const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (shippingCost || 0);
     
     try {
-      // 1. INSERE O PEDIDO NO BANCO (STATUS: Aguardando Validação)
-      const { error } = await supabase.from('orders').insert([{
+      // 1. INSERIR NO SUPABASE (STATUS: PENDENTE)
+      const { data, error } = await supabase.from('orders').insert([{
         user_id: currentUser.id,
         unit_name: currentUser.unit_name,
         network_tag: currentUser.network_tag,
-        items: cart, // Supabase converte array JS para JSONB automaticamente
+        items: cart,
         total_amount: total,
-        status: 'Aguardando Validação'
-      }]);
+        status: 'Pendente' // Aguardando validação do Admin
+      }]).select();
 
-      if (error) {
-        console.error("Erro SQL:", error);
-        throw new Error("Falha ao registrar pedido no banco de dados.");
-      }
-      
-      // 2. PREPARA O LINK DO WHATSAPP (Para ser enviado DEPOIS)
-      const itemsList = cart.map(item => 
-        `▪ ${item.quantity}x ${item.name} (Tam: ${item.selectedSize})`
-      ).join('\n');
-      
-      const message = `*NOVO PEDIDO REGISTRADO!* 🚀\n\n` +
-        `👤 *Cliente:* ${currentUser.unit_name}\n` +
-        `🏢 *Rede:* ${currentUser.network_tag.toUpperCase()}\n\n` +
-        `📦 *Resumo do Pedido:*\n${itemsList}\n\n` +
-        `🚚 *Frete:* ${shippingCost ? `R$ ${shippingCost.toFixed(2)}` : 'A combinar'}\n` +
-        `💰 *Total Geral:* R$ ${(total).toFixed(2)}\n\n` +
-        `✅ *Status:* Aguardando validação do pagamento pelo Gestor.`;
-      
-      setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(message)}`);
-      
-      // 3. LIMPA CARRINHO E ABRE MODAL DE SUCESSO
-      setIsPaymentOpen(false);
-      setIsCartOpen(false);
-      setIsOrderSuccessOpen(true);
-      setCart([]);
-      setShippingCost(null);
-      setCep('');
-      
-      fetchInitialData(); // Atualiza a lista local
-    } catch (err: any) {
-      showToast(err.message, "error");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleUpdateOrderStatus = async (orderId: string, currentStatus: string) => {
-    if (!confirm("Confirmar que o pagamento foi recebido e iniciar produção?")) return;
-    
-    try {
-      const { error } = await supabase.from('orders')
-        .update({ status: 'Pago/Em Produção' })
-        .eq('id', orderId);
-        
       if (error) throw error;
-      showToast("Pedido validado com sucesso!", "success");
-      // O Realtime irá atualizar a lista automaticamente
-    } catch (err) {
-      showToast("Erro ao validar pedido.", "error");
-    }
+      
+      const orderId = data && data[0] ? data[0].id.slice(0, 8).toUpperCase() : '???';
+
+      // 2. GERAR LINK WHATSAPP
+      const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
+      const msg = `*NOVO PEDIDO #${orderId}* 🚀\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens:*\n${itemsList}\n\n💰 *Total:* R$ ${total.toFixed(2)}\n\n✅ *Comprovante Anexo:* (Envie a foto do PIX)`;
+      
+      setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`);
+      
+      // 3. UI UPDATES
+      setIsPaymentOpen(false); setIsCartOpen(false); setIsOrderSuccessOpen(true);
+      setCart([]); setShippingCost(null);
+    } catch (err) { console.error(err); showToast("Erro ao salvar pedido no banco", "error"); }
+    finally { setIsLoading(false); }
   };
 
-  const filteredProducts = useMemo(() => {
-    if (currentUser?.role === 'admin') return products;
-    const userTag = currentUser?.network_tag?.toLowerCase().trim() || '';
-    return products.filter(p => (p.network_tag?.toLowerCase().trim() || '') === userTag);
-  }, [products, currentUser]);
+  const handleValidateOrder = async (orderId: string) => {
+    if (!confirm("Confirmar recebimento do pagamento?")) return;
+    try {
+       await supabase.from('orders').update({ status: 'Pago/Em Produção' }).eq('id', orderId);
+       showToast("Pedido validado!", "success");
+    } catch { showToast("Erro ao validar", "error"); }
+  };
 
+  const handleAddProduct = async (e: React.FormEvent) => {
+    e.preventDefault(); setIsLoading(true);
+    const p = { ...newProduct, price: parseFloat(newProduct.price), min_order: parseInt(newProduct.min_order), production_days: parseInt(newProduct.production_days) };
+    try {
+      if (editingId) await supabase.from('products').update(p).eq('id', editingId);
+      else await supabase.from('products').insert([p]);
+      showToast("Salvo com sucesso!"); setEditingId(null);
+      setNewProduct({ name: '', price: '', image_url: '', network_tag: '', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
+    } catch { showToast("Erro ao salvar", "error"); } finally { setIsLoading(false); }
+  };
+
+  // --- COMPUTED ---
   const totalRevenue = useMemo(() => orders.reduce((acc, order) => acc + order.total_amount, 0), [orders]);
-
   const mostActiveNetwork = useMemo(() => {
     if (orders.length === 0) return '---';
     const salesByNetwork: Record<string, number> = {};
@@ -552,8 +314,8 @@ export default function App() {
   // --- RENDER ---
   if (isLoading && !currentUser) return <Spinner />;
 
+  // 1. LOGIN / SIGNUP VIEW
   if (!currentUser) {
-    // LOGIN SCREEN (Mesmo código anterior)
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
         <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-[#E11D48]/10 rounded-full blur-[120px]" />
@@ -630,7 +392,7 @@ export default function App() {
                                 <input type="text" placeholder="Telefone *" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                                 <input type="text" placeholder="Nome Responsável" value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" />
                                 <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Endereço</div>
-                                <div className="relative"><input type="text" placeholder="CEP *" value={formData.cep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} onBlur={handleAddressLookup} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
+                                <div className="relative"><input type="text" placeholder="CEP *" value={formData.cep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
                                 <input type="text" placeholder="Cidade" value={formData.address_city} readOnly className="w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
                                 <input type="text" placeholder="Logradouro" value={formData.address_street} readOnly className="md:col-span-2 w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
                                 <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Acesso</div>
@@ -664,7 +426,7 @@ export default function App() {
         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
         <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between border-b border-white/5">
           <div className="flex items-center gap-3"><Logo /><div className="flex flex-col"><h2 className="text-sm font-black uppercase tracking-tighter text-white">Central de Gestão</h2><span className="text-[9px] font-bold text-[#E11D48] tracking-widest uppercase">• Painel Administrativo</span></div></div>
-          <button onClick={handleLogout} className="p-3 bg-zinc-900/50 rounded-2xl text-zinc-400 hover:text-[#E11D48] border border-white/5"><LogOut size={18} /></button>
+          <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 bg-zinc-900/50 rounded-2xl text-zinc-400 hover:text-[#E11D48] border border-white/5"><LogOut size={18} /></button>
         </header>
 
         <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
@@ -703,7 +465,7 @@ export default function App() {
                           <td className="p-6"><span className={`border px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${order.status === 'Pago/Em Produção' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>{order.status}</span></td>
                           <td className="p-6">
                             {order.status !== 'Pago/Em Produção' && (
-                                <button onClick={() => handleUpdateOrderStatus(order.id, order.status)} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-colors">
+                                <button onClick={() => handleValidateOrder(order.id)} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-colors shadow-lg shadow-emerald-500/20">
                                     <Check size={14} /> Validar Pagamento
                                 </button>
                             )}
@@ -721,7 +483,6 @@ export default function App() {
           <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
             <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Gerenciar Catálogo</h2>
             <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-              {/* (Campos do formulário mantidos iguais para economizar espaço visual aqui, mas funcionais) */}
               <div className="lg:col-span-4 flex flex-col gap-2">
                  <div onClick={() => fileInputRef.current?.click()} className="aspect-[3/4] bg-zinc-950 border border-white/5 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 overflow-hidden relative group transition-all">
                   {newProduct.image_url ? ( <img src={newProduct.image_url} className="absolute inset-0 w-full h-full object-cover" /> ) : ( <div className="text-zinc-700 text-center group-hover:text-zinc-500 transition-colors"><ImageIcon className="mx-auto mb-3 w-10 h-10 stroke-1" /><p className="text-[9px] font-black uppercase tracking-widest">Upload Imagem</p></div> )}
@@ -757,14 +518,14 @@ export default function App() {
           {/* LISTA DE PRODUTOS */}
           <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {products.map(p => (
-                <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 flex items-center gap-4">
+                <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 flex items-center gap-4 group hover:border-[#E11D48]/30 transition-all">
                   <img src={p.image_url} className="w-16 h-16 rounded-xl object-cover bg-zinc-950" />
                   <div className="flex-1 min-w-0">
                     <h4 className="text-[10px] font-bold text-white truncate uppercase mb-1">{p.name}</h4>
                     <p className="text-[9px] font-bold text-zinc-500 uppercase">{p.network_tag}</p>
                     <div className="flex gap-2 mt-2">
                       <button onClick={() => { setEditingId(p.id); setNewProduct({ ...p, price: p.price.toString(), min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [], description: p.description || '' }); window.scrollTo({ top: 800, behavior: 'smooth' }); }} className="text-xs text-zinc-400 hover:text-white">Editar</button>
-                      <button onClick={() => handleDeleteProduct(p.id)} className="text-xs text-rose-500 hover:text-rose-400">Excluir</button>
+                      <button onClick={() => { if(confirm("Excluir?")) { supabase.from('products').delete().eq('id', p.id).then(() => setProducts(products.filter(pr => pr.id !== p.id))); } }} className="text-xs text-rose-500 hover:text-rose-400">Excluir</button>
                     </div>
                   </div>
                 </div>
@@ -804,7 +565,7 @@ export default function App() {
           </button>
           <button onClick={() => setIsHistoryOpen(true)} className="p-3 text-zinc-500 hover:text-white transition-colors"><List size={20} /></button>
           <button onClick={() => setIsCartOpen(true)} className="relative p-3 bg-zinc-900/50 rounded-2xl border border-white/5 hover:border-[#E11D48]/50 transition-colors"><ShoppingCart size={20} />{cart.length > 0 && <span className="absolute -top-1 -right-1 bg-[#E11D48] text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-black shadow-lg shadow-rose-600/50">{cart.length}</span>}</button>
-          <button onClick={handleLogout} className="p-3 text-zinc-500 hover:text-rose-500"><LogOut size={20} /></button>
+          <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 text-zinc-500 hover:text-rose-500"><LogOut size={20} /></button>
         </div>
       </header>
 
@@ -814,7 +575,7 @@ export default function App() {
         </div>
         
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-          {filteredProducts.map(p => {
+          {products.filter(p => (p.network_tag?.toLowerCase().trim() || '') === (currentUser?.network_tag?.toLowerCase().trim() || '')).map(p => {
              const selectedSize = clientSelectedSizes[p.id] || (p.available_sizes && p.available_sizes.length > 0 ? p.available_sizes[0] : 'Único');
              return (
               <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group shadow-2xl hover:border-[#E11D48]/30 transition-all">
@@ -847,7 +608,7 @@ export default function App() {
                 {cart.length === 0 ? <p className="text-center py-20 uppercase font-black text-[10px] text-zinc-600 tracking-widest">Nenhum item</p> : cart.map((item, i) => (
                   <div key={i} className="flex gap-4 p-4 bg-zinc-950/40 rounded-3xl border border-white/5">
                     <img src={item.image_url} className="w-16 h-16 object-cover rounded-xl" />
-                    <div className="flex-1"><h4 className="text-[10px] font-bold text-white uppercase mb-1">{item.name}</h4><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tam: {item.selectedSize}</p><div className="flex items-center gap-3"><button onClick={() => updateQuantity(i, -1)} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Minus size={12}/></button><span className="text-sm font-black text-[#E11D48]">{item.quantity}</span><button onClick={() => updateQuantity(i, 1)} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Plus size={12}/></button></div></div>
+                    <div className="flex-1"><h4 className="text-[10px] font-bold text-white uppercase mb-1">{item.name}</h4><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tam: {item.selectedSize}</p><div className="flex items-center gap-3"><button onClick={() => { const newCart = [...cart]; newCart[i].quantity > newCart[i].min_order ? newCart[i].quantity-- : newCart.splice(i, 1); setCart(newCart); }} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Minus size={12}/></button><span className="text-sm font-black text-[#E11D48]">{item.quantity}</span><button onClick={() => { const newCart = [...cart]; newCart[i].quantity++; setCart(newCart); }} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Plus size={12}/></button></div></div>
                     <button onClick={() => setCart(cart.filter((_, idx) => idx !== i))} className="text-zinc-600 hover:text-rose-500 self-start"><X size={16}/></button>
                   </div>
                 ))}
@@ -893,7 +654,7 @@ export default function App() {
               <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-zinc-950 border border-[#E11D48]/20 rounded-[40px] max-w-sm w-full p-10 text-center relative shadow-2xl shadow-rose-900/20">
                  <div className="w-24 h-24 bg-[#E11D48] rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl shadow-rose-500/30"><CheckCircle2 className="text-white" size={48} /></div>
                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Pedido Registrado!</h2>
-                 <p className="text-zinc-400 text-sm mb-8">Seu pedido foi salvo no sistema como <strong>Aguardando Validação</strong>. O envio será iniciado assim que o gestor confirmar o pagamento.</p>
+                 <p className="text-zinc-400 text-sm mb-8">Seu pedido foi salvo no sistema como <strong>Pendente</strong>. O envio será iniciado assim que o gestor confirmar o pagamento.</p>
                  <button onClick={() => { window.open(whatsappLink, '_blank'); setIsOrderSuccessOpen(false); }} className="w-full bg-[#25D366] hover:bg-[#1da851] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-3"><Send size={18} /> ENVIAR COMPROVANTE WHATSAPP</button>
                  <button onClick={() => setIsOrderSuccessOpen(false)} className="mt-6 text-zinc-600 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors">Fechar</button>
               </motion.div>
