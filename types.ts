@@ -20,6 +20,11 @@ export interface User {
   network_tag: string;
   unit_name: string;
   role: 'user' | 'admin';
+  // Novos campos corporativos opcionais (pois admin pode não ter)
+  cnpj?: string;
+  phone?: string;
+  contact_name?: string;
+  address?: string;
 }
 
 export interface CartItem extends Product {

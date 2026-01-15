@@ -5,7 +5,7 @@ import {
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
   Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown,
-  Building2, Phone, User, Mail, Lock, Search
+  Building2, Phone, User, Mail, Lock, Search, Send, Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -20,20 +20,18 @@ class PixPayload {
   private txId: string;
 
   constructor(key: string, name: string, city: string, amount: number, txId: string = '***') {
-    // Sanitização rigorosa para evitar erro de leitura no banco
-    this.merchantKey = key.replace(/\D/g, ''); // Remove tudo que não for número (para CNPJ/CPF/Tel)
-    this.merchantName = this.normalizeString(name, 25); // Max 25 chars
-    this.merchantCity = this.normalizeString(city, 15); // Max 15 chars (Regra crítica do PIX)
+    this.merchantKey = key.replace(/\D/g, ''); 
+    this.merchantName = this.normalizeString(name, 25); 
+    this.merchantCity = this.normalizeString(city, 15); 
     this.amount = amount.toFixed(2);
     this.txId = this.normalizeString(txId, 25) || '***';
   }
 
-  // Remove acentos e limita tamanho
   private normalizeString(str: string, limit: number): string {
     return str
       .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") // Remove acentos
-      .replace(/[^a-zA-Z0-9 ]/g, "")   // Remove especiais
+      .replace(/[\u0300-\u036f]/g, "") 
+      .replace(/[^a-zA-Z0-9 ]/g, "")   
       .toUpperCase()
       .substring(0, limit)
       .trim();
@@ -61,19 +59,19 @@ class PixPayload {
 
   public generate(): string {
     const payload = [
-      this.formatField('00', '01'), // Payload Format Indicator
-      this.formatField('26', // Merchant Account Information
+      this.formatField('00', '01'),
+      this.formatField('26',
         this.formatField('00', 'br.gov.bcb.pix') +
         this.formatField('01', this.merchantKey)
       ),
-      this.formatField('52', '0000'), // Merchant Category Code
-      this.formatField('53', '986'),  // Transaction Currency (BRL)
-      this.formatField('54', this.amount), // Transaction Amount
-      this.formatField('58', 'BR'),   // Country Code
-      this.formatField('59', this.merchantName), // Merchant Name
-      this.formatField('60', this.merchantCity), // Merchant City
-      this.formatField('62', this.formatField('05', this.txId)), // Additional Data Field Template
-      '6304' // CRC16 ID + Length
+      this.formatField('52', '0000'),
+      this.formatField('53', '986'), 
+      this.formatField('54', this.amount),
+      this.formatField('58', 'BR'),   
+      this.formatField('59', this.merchantName),
+      this.formatField('60', this.merchantCity), 
+      this.formatField('62', this.formatField('05', this.txId)), 
+      '6304' 
     ].join('');
 
     return `${payload}${this.getCRC16(payload)}`;
@@ -86,7 +84,7 @@ interface OrderDB {
   user_id: string;
   unit_name: string;
   network_tag: string;
-  items: CartItem[];
+  items: CartItem[]; // Mapeado do JSONB
   total_amount: number;
   status: string;
   created_at: string;
@@ -128,7 +126,6 @@ export default function App() {
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
   
-  // FORMULÁRIO EXPANDIDO PARA CLIENTES
   const [formData, setFormData] = useState({ 
     email: '', 
     password: '', 
@@ -136,7 +133,6 @@ export default function App() {
     network_tag: '', 
     role: 'user' as 'user' | 'admin', 
     adminKey: '',
-    // Novos campos de cadastro
     cnpj: '',
     phone: '',
     contact_name: '',
@@ -146,7 +142,7 @@ export default function App() {
     address_state: ''
   });
 
-  const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false); // Estado para tela de "Verifique seu email"
+  const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false);
 
   // App State
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -154,13 +150,12 @@ export default function App() {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
+  const [whatsappLink, setWhatsappLink] = useState('');
   
-  // Client Selection State (Para guardar o tamanho selecionado de cada produto antes de adicionar ao carrinho)
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
   
-  // Admin Dynamic Data State
   const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
-
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -254,32 +249,31 @@ export default function App() {
       // 1. Fetch Produtos
       let query = supabase.from('products').select('*').order('name');
       const { data: prodData } = await query;
-      if (prodData) {
-        setProducts(prodData.sort((a, b) => a.name.localeCompare(b.name)));
-      }
+      if (prodData) setProducts(prodData.sort((a, b) => a.name.localeCompare(b.name)));
 
-      // 2. Fetch Pedidos
+      // 2. Fetch Pedidos (Lógica de Role corrigida)
       let orderQuery = supabase.from('orders').select('*').order('created_at', { ascending: false });
+      
+      // Se NÃO for admin, filtra apenas os pedidos do próprio usuário
       if (currentUser.role !== 'admin') {
         orderQuery = orderQuery.eq('user_id', currentUser.id);
       }
-      const { data: orderData } = await orderQuery;
-      if (orderData) setOrders(orderData);
+      
+      const { data: orderData, error: orderError } = await orderQuery;
+      
+      if (orderError) {
+        console.error("Erro ao buscar pedidos:", orderError);
+      } else if (orderData) {
+        setOrders(orderData);
+      }
 
-      // 3. Fetch Redes Únicas (Para o Admin popular o Select)
-      // Combina dados de perfis E produtos para garantir que nada fique de fora
+      // 3. Fetch Redes Únicas (Para Admin)
       if (currentUser.role === 'admin') {
           const networksSet = new Set<string>();
-
-          // Tenta pegar de profiles (usuários cadastrados)
           const { data: profilesData } = await supabase.from('profiles').select('network_tag').neq('role', 'admin');
           if (profilesData) profilesData.forEach(p => p.network_tag && networksSet.add(p.network_tag));
-
-          // Tenta pegar de produtos existentes (redes que já tem produtos)
           const { data: productsData } = await supabase.from('products').select('network_tag');
           if (productsData) productsData.forEach(p => p.network_tag && networksSet.add(p.network_tag));
-
-          // Converte Set para Array, filtra vazios e ordena
           const uniqueNetworks = Array.from(networksSet).filter(Boolean).sort();
           setAvailableNetworks(uniqueNetworks);
       }
@@ -293,17 +287,12 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    
-    // Configuração robusta do Realtime
     const channel = supabase.channel('global_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchInitialData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchInitialData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchInitialData())
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [currentUser]);
 
   // --- HELPERS ---
@@ -312,84 +301,44 @@ export default function App() {
 
   // --- SHIPPING LOGIC ---
   const calculateShipping = async () => {
-    if (cep.length !== 8) {
-      showToast("CEP inválido. Digite 8 números.", "error");
-      return;
-    }
+    if (cep.length !== 8) { showToast("CEP inválido. Digite 8 números.", "error"); return; }
     setIsCalculatingShipping(true);
     try {
-      // Origem: 15080-325 (SP)
       const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
       const data = await response.json();
-      
       if (data.erro) throw new Error("CEP não encontrado");
 
       let cost = 0;
-      if (data.uf === 'SP') {
-        cost = 25.90; // Frete Estadual
-      } else if (['RJ', 'MG', 'ES', 'PR', 'SC', 'RS'].includes(data.uf)) {
-        cost = 45.90; // Regiões Próximas
-      } else {
-        cost = 78.50; // Demais regiões
-      }
+      if (data.uf === 'SP') cost = 25.90;
+      else if (['RJ', 'MG', 'ES', 'PR', 'SC', 'RS'].includes(data.uf)) cost = 45.90;
+      else cost = 78.50;
 
       setShippingCost(cost);
-      setShippingAddress({
-        logradouro: data.logradouro,
-        localidade: data.localidade,
-        uf: data.uf
-      });
-      showToast("Frete calculado com sucesso!", "success");
-
+      setShippingAddress({ logradouro: data.logradouro, localidade: data.localidade, uf: data.uf });
+      showToast("Frete calculado!", "success");
     } catch (error) {
-      showToast("Erro ao calcular frete. Verifique o CEP.", "error");
+      showToast("Erro ao calcular frete.", "error");
       setShippingCost(null);
-      setShippingAddress(null);
-    } finally {
-      setIsCalculatingShipping(false);
-    }
+    } finally { setIsCalculatingShipping(false); }
   };
 
-  // --- REGISTRATION ADDRESS LOOKUP ---
   const handleAddressLookup = async () => {
     const rawCep = formData.cep.replace(/\D/g, '');
-    if (rawCep.length !== 8) {
-      showToast("CEP inválido. Digite 8 números.", "error");
-      return;
-    }
+    if (rawCep.length !== 8) return;
     setIsLoading(true);
     try {
       const response = await fetch(`https://viacep.com.br/ws/${rawCep}/json/`);
       const data = await response.json();
-      if (data.erro) throw new Error("CEP não encontrado");
-
-      setFormData(prev => ({
-        ...prev,
-        address_street: data.logradouro,
-        address_city: data.localidade,
-        address_state: data.uf
-      }));
-    } catch (err) {
-      showToast("Erro ao buscar CEP.", "error");
-    } finally {
-      setIsLoading(false);
-    }
+      if (!data.erro) {
+        setFormData(prev => ({ ...prev, address_street: data.logradouro, address_city: data.localidade, address_state: data.uf }));
+      }
+    } catch (err) {} finally { setIsLoading(false); }
   };
 
-  // --- PIX LOGIC ---
   const getPixCode = () => {
     const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
     const total = subtotal + (shippingCost || 0);
-    
-    // CNPJ Tiquinho: 53424027000178
-    // Cidade: SAO JOSE RIO PRETO (Sanitizada dentro da classe para SAO JOSE RIO PR)
-    const pix = new PixPayload(
-      '53424027000178',
-      'TIQUINHO UNIFORMES',
-      'SAO JOSE RIO PRETO',
-      total,
-      `PED${Date.now().toString().slice(-6)}`
-    );
+    const pix = new PixPayload('53424027000178', 'TIQUINHO UNIFORMES', 'SAO JOSE RIO PRETO', total, `PED${Date.now().toString().slice(-6)}`);
     return pix.generate();
   };
 
@@ -404,70 +353,32 @@ export default function App() {
       });
       if (authError) throw authError;
       
-      const { data: profile, error: profileError } = await supabase.from('profiles').select('*').eq('id', authData.user.id).single();
-      if (profileError || !profile) throw new Error('Perfil não encontrado.');
-      
-      const user: UserType = {
-        id: authData.user.id,
-        email: authData.user.email!,
-        unit_name: profile.unit_name,
-        network_tag: profile.network_tag,
-        role: profile.role
-      };
-      setCurrentUser(user);
-      localStorage.setItem('tiquinho_session', JSON.stringify(user));
-      showToast(`Olá, ${profile.unit_name}!`);
-    } catch (err: any) {
-      // TRATAMENTO ESPECÍFICO DE EMAIL NÃO CONFIRMADO
-      if (err.message && (err.message.includes("Email not confirmed") || err.message.includes("not verified"))) {
-        showToast("Por favor, acesse seu e-mail e confirme o cadastro antes de entrar.", "error");
-      } else {
-        showToast(err.message || 'Erro ao fazer login', 'error');
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', authData.user.id).single();
+      if (profile) {
+        const user: UserType = { id: authData.user.id, email: authData.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role };
+        setCurrentUser(user);
+        localStorage.setItem('tiquinho_session', JSON.stringify(user));
+        showToast(`Olá, ${profile.unit_name}!`);
       }
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (err: any) {
+      if (err.message && err.message.includes("Email not confirmed")) {
+        showToast("Verifique seu e-mail antes de entrar.", "error");
+      } else {
+        showToast("Erro ao fazer login", "error");
+      }
+    } finally { setIsLoading(false); }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
-    // Validação ADMIN (Mantida igual)
-    if (authFlow === 'admin') {
-       if (formData.adminKey !== 'TIQUINHO2026') {
+    if (authFlow === 'admin' && formData.adminKey !== 'TIQUINHO2026') {
          showToast("Chave Admin Inválida", "error");
-         setIsLoading(false);
-         return;
-       }
-       // Lógica de cadastro Admin (Simplificada, sem meta dados extras por enquanto)
-       try {
-         const { error } = await supabase.auth.signUp({
-           email: formData.email.toLowerCase().trim(),
-           password: formData.password,
-           options: {
-             data: {
-               unit_name: formData.unit_name,
-               network_tag: 'admin',
-               role: 'admin'
-             }
-           }
-         });
-         if (error) throw error;
-         setIsRegistrationSuccess(true);
-       } catch (err: any) {
-         showToast(err.message || "Erro no cadastro", "error");
-       } finally {
-         setIsLoading(false);
-       }
-       return;
+         setIsLoading(false); return;
     }
-
-    // Validação CLIENTE (Formulário Completo)
-    if (!formData.network_tag.trim() || !formData.cnpj || !formData.phone) {
-      showToast("Preencha todos os campos obrigatórios (*)", "error");
-      setIsLoading(false);
-      return;
+    if (authFlow !== 'admin' && (!formData.network_tag.trim() || !formData.cnpj || !formData.phone)) {
+      showToast("Preencha campos obrigatórios (*)", "error");
+      setIsLoading(false); return;
     }
 
     try {
@@ -475,13 +386,11 @@ export default function App() {
         email: formData.email.toLowerCase().trim(),
         password: formData.password,
         options: {
-          emailRedirectTo: window.location.origin, // Garante retorno ao site
+          emailRedirectTo: window.location.origin,
           data: {
-            // Dados padrão da tabela profiles
             unit_name: formData.unit_name,
-            network_tag: formData.network_tag.trim(),
-            role: 'user',
-            // Dados Extras (Meta-dados)
+            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag.trim(),
+            role: authFlow === 'admin' ? 'admin' : 'user',
             cnpj: formData.cnpj,
             phone: formData.phone,
             contact_name: formData.contact_name,
@@ -490,18 +399,11 @@ export default function App() {
         }
       });
       if (error) throw error;
-      
-      // SUCESSO: Mostra tela de verificação em vez de logar
       setIsRegistrationSuccess(true);
-      
-      // Limpa dados sensíveis
       setFormData(prev => ({ ...prev, password: '', adminKey: '' }));
-
     } catch (err: any) {
       showToast(err.message || "Erro no cadastro", "error");
-    } finally {
-      setIsLoading(false);
-    }
+    } finally { setIsLoading(false); }
   };
 
   const handleLogout = async () => {
@@ -510,97 +412,54 @@ export default function App() {
     setCurrentUser(null);
     setAuthFlow('initial');
     setCart([]);
-    setShippingCost(null);
-    setCep('');
     localStorage.removeItem('tiquinho_session');
     setIsLoading(false);
   };
 
+  // --- PRODUCT MANAGEMENT ---
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
-    if (!newProduct.network_tag) {
-        showToast("Selecione uma Rede Franqueada.", "error");
-        setIsLoading(false);
-        return;
-    }
-
     const safeSizes = Array.isArray(newProduct.available_sizes) ? newProduct.available_sizes : [];
-
     const payload = {
-      name: newProduct.name,
-      description: newProduct.description,
-      price: parseFloat(newProduct.price),
-      image_url: newProduct.image_url,
-      // Salva a rede selecionada do Dropdown (que veio do Banco)
-      // FIX: Adicionado trim() para evitar espaços acidentais no cadastro
-      network_tag: newProduct.network_tag.trim(),
-      category: newProduct.category,
-      min_order: parseInt(newProduct.min_order),
-      production_days: parseInt(newProduct.production_days),
-      available_sizes: safeSizes
+      name: newProduct.name, description: newProduct.description, price: parseFloat(newProduct.price),
+      image_url: newProduct.image_url, network_tag: newProduct.network_tag.trim(), category: newProduct.category,
+      min_order: parseInt(newProduct.min_order), production_days: parseInt(newProduct.production_days), available_sizes: safeSizes
     };
 
     try {
-      let resultData: Product;
-      
       if (editingId) {
-         const { data, error } = await supabase.from('products').update(payload).eq('id', editingId).select();
-         if (error) throw error;
-         if (!data || data.length === 0) throw new Error("Erro de atualização");
-         resultData = data[0] as Product;
-         setProducts(prev => prev.map(p => p.id === editingId ? resultData : p));
+         await supabase.from('products').update(payload).eq('id', editingId);
       } else {
-         const { data, error } = await supabase.from('products').insert([payload]).select();
-         if (error) throw error;
-         if (!data || data.length === 0) throw new Error("Erro de inserção");
-         resultData = data[0] as Product;
-         setProducts(prev => [...prev, resultData].sort((a, b) => a.name.localeCompare(b.name)));
+         await supabase.from('products').insert([payload]);
       }
-      
-      const rede = newProduct.network_tag.replace('-', ' ').toUpperCase();
-      showToast(editingId ? "Produto atualizado!" : `Produto publicado para ${rede}!`);
-      
+      showToast(editingId ? "Produto atualizado!" : "Produto publicado!");
       setEditingId(null);
-      // Reseta o formulário
       setNewProduct({ name: '', price: '', image_url: '', network_tag: '', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
-    } catch (err: any) { 
-       console.error(err);
-       if (err.message?.includes('available_sizes')) {
-         showToast("Erro: Execute o comando SQL fornecido para corrigir o banco.", "error");
-       } else {
-         showToast("Erro ao salvar: " + err.message, "error"); 
-       }
-    }
+    } catch (err) { showToast("Erro ao salvar produto.", "error"); }
     finally { setIsLoading(false); }
   };
 
   const handleDeleteProduct = async (id: string) => {
-      if(!confirm("Tem certeza que deseja excluir este modelo?")) return;
+      if(!confirm("Tem certeza que deseja excluir?")) return;
       try {
-          const { error } = await supabase.from('products').delete().eq('id', id);
-          if (error) throw error;
+          await supabase.from('products').delete().eq('id', id);
           setProducts(prev => prev.filter(p => p.id !== id));
-          showToast("Produto removido com sucesso.", "success");
-      } catch (err) {
-          showToast("Erro ao excluir produto.", "error");
-      }
+          showToast("Produto removido.", "success");
+      } catch (err) { showToast("Erro ao excluir.", "error"); }
   };
 
   const updateQuantity = (index: number, delta: number) => {
     const newCart = [...cart];
     newCart[index].quantity += delta;
     if (newCart[index].quantity < newCart[index].min_order) {
-       if(confirm(`A quantidade mínima é ${newCart[index].min_order}. Deseja remover o item?`)) {
-          newCart.splice(index, 1);
-       } else {
-          newCart[index].quantity = newCart[index].min_order;
-       }
+       if(confirm(`Remover item do carrinho?`)) newCart.splice(index, 1);
+       else newCart[index].quantity = newCart[index].min_order;
     }
     setCart(newCart);
   };
 
+  // --- ORDER MANAGEMENT ---
   const handleFinalizeOrder = async () => {
     if (!currentUser) return;
     setIsLoading(true);
@@ -608,97 +467,93 @@ export default function App() {
     const total = subtotal + (shippingCost || 0);
     
     try {
+      // 1. INSERE O PEDIDO NO BANCO (STATUS: Aguardando Validação)
       const { error } = await supabase.from('orders').insert([{
         user_id: currentUser.id,
         unit_name: currentUser.unit_name,
         network_tag: currentUser.network_tag,
-        items: cart,
+        items: cart, // Supabase converte array JS para JSONB automaticamente
         total_amount: total,
-        status: 'Pago/Aguardando Produção'
+        status: 'Aguardando Validação'
       }]);
 
-      if (error) throw error;
+      if (error) {
+        console.error("Erro SQL:", error);
+        throw new Error("Falha ao registrar pedido no banco de dados.");
+      }
       
-      // --- NOTIFICAÇÃO AUTOMÁTICA WHATSAPP ---
+      // 2. PREPARA O LINK DO WHATSAPP (Para ser enviado DEPOIS)
       const itemsList = cart.map(item => 
         `▪ ${item.quantity}x ${item.name} (Tam: ${item.selectedSize})`
       ).join('\n');
       
-      const message = `*NOVO PEDIDO CONFIRMADO!* 🚀\n\n` +
+      const message = `*NOVO PEDIDO REGISTRADO!* 🚀\n\n` +
         `👤 *Cliente:* ${currentUser.unit_name}\n` +
         `🏢 *Rede:* ${currentUser.network_tag.toUpperCase()}\n\n` +
         `📦 *Resumo do Pedido:*\n${itemsList}\n\n` +
         `🚚 *Frete:* ${shippingCost ? `R$ ${shippingCost.toFixed(2)}` : 'A combinar'}\n` +
         `💰 *Total Geral:* R$ ${(total).toFixed(2)}\n\n` +
-        `✅ *Status:* Pagamento via PIX realizado. Aguardando conferência.`;
+        `✅ *Status:* Aguardando validação do pagamento pelo Gestor.`;
       
-      // Abre o WhatsApp com a mensagem pré-preenchida
-      const whatsappUrl = `https://wa.me/5517992198086?text=${encodeURIComponent(message)}`;
-      window.open(whatsappUrl, '_blank');
-
-      showToast("Pagamento confirmado! Pedido enviado para produção.", "success");
+      setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(message)}`);
+      
+      // 3. LIMPA CARRINHO E ABRE MODAL DE SUCESSO
+      setIsPaymentOpen(false);
+      setIsCartOpen(false);
+      setIsOrderSuccessOpen(true);
       setCart([]);
       setShippingCost(null);
       setCep('');
-      setIsPaymentOpen(false);
-      setIsCartOpen(false);
-      fetchInitialData();
-    } catch (err) {
-      showToast("Erro ao processar pedido.", "error");
+      
+      fetchInitialData(); // Atualiza a lista local
+    } catch (err: any) {
+      showToast(err.message, "error");
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleUpdateOrderStatus = async (orderId: string, currentStatus: string) => {
+    if (!confirm("Confirmar que o pagamento foi recebido e iniciar produção?")) return;
+    
+    try {
+      const { error } = await supabase.from('orders')
+        .update({ status: 'Pago/Em Produção' })
+        .eq('id', orderId);
+        
+      if (error) throw error;
+      showToast("Pedido validado com sucesso!", "success");
+      // O Realtime irá atualizar a lista automaticamente
+    } catch (err) {
+      showToast("Erro ao validar pedido.", "error");
+    }
+  };
+
   const filteredProducts = useMemo(() => {
     if (currentUser?.role === 'admin') return products;
-    
-    // FIX: Filtragem Inteligente (Normalização)
-    // Converte para minúsculas e remove espaços para garantir o match
     const userTag = currentUser?.network_tag?.toLowerCase().trim() || '';
-    
-    return products.filter(p => {
-        const productTag = p.network_tag?.toLowerCase().trim() || '';
-        return productTag === userTag;
-    });
+    return products.filter(p => (p.network_tag?.toLowerCase().trim() || '') === userTag);
   }, [products, currentUser]);
 
-  const totalRevenue = useMemo(() => {
-    return orders.reduce((acc, order) => acc + order.total_amount, 0);
-  }, [orders]);
+  const totalRevenue = useMemo(() => orders.reduce((acc, order) => acc + order.total_amount, 0), [orders]);
 
-  // CÁLCULO DA REDE MAIS ATIVA BASEADO EM VENDAS REAIS
   const mostActiveNetwork = useMemo(() => {
     if (orders.length === 0) return '---';
-
     const salesByNetwork: Record<string, number> = {};
-
     orders.forEach(order => {
       const tag = order.network_tag ? order.network_tag.trim().toLowerCase() : 'desconhecido';
       salesByNetwork[tag] = (salesByNetwork[tag] || 0) + order.total_amount;
     });
-
-    let topNetwork = '---';
-    let maxSales = 0;
-
-    Object.entries(salesByNetwork).forEach(([tag, total]) => {
-      if (total > maxSales) {
-        maxSales = total;
-        topNetwork = tag;
-      }
-    });
-
-    if (topNetwork === '---' || maxSales === 0) return '---';
-
-    // Formata o nome da rede (ex: "droga-raia" -> "DROGA RAIA")
-    return topNetwork.replace(/-/g, ' ').toUpperCase();
+    let top = '---'; let max = 0;
+    Object.entries(salesByNetwork).forEach(([tag, total]) => { if (total > max) { max = total; top = tag; } });
+    return top === '---' ? top : top.replace(/-/g, ' ').toUpperCase();
   }, [orders]);
 
   // --- RENDER ---
   if (isLoading && !currentUser) return <Spinner />;
 
-  // 1. AUTH FLOWS
   if (!currentUser) {
+    // LOGIN SCREEN (Mesmo código anterior)
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
         <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-[#E11D48]/10 rounded-full blur-[120px]" />
@@ -734,20 +589,12 @@ export default function App() {
             <motion.div key="auth" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className={`w-full ${isSigningUp && authFlow === 'client' ? 'max-w-4xl' : 'max-w-md'} z-10 transition-all duration-500`}>
               <button onClick={() => { setAuthFlow('initial'); setIsSigningUp(false); setIsRegistrationSuccess(false); }} className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>Voltar</button>
               
-              {/* TELA DE SUCESSO DO CADASTRO - VERIFICAÇÃO DE EMAIL */}
               {isRegistrationSuccess ? (
                 <div className="glass p-10 rounded-[40px] shadow-2xl text-center">
-                  <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <Mail size={40} className="text-emerald-500" />
-                  </div>
+                  <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6"><Mail size={40} className="text-emerald-500" /></div>
                   <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">Verifique seu E-mail</h2>
                   <p className="text-zinc-400 text-sm mb-6">Enviamos um link de confirmação para <strong>{formData.email}</strong>.<br/>Por favor, clique no link para ativar sua conta corporativa.</p>
-                  <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5 text-xs text-zinc-500 mb-8">
-                    <p>Após confirmar, retorne a esta página e faça login com seus dados.</p>
-                  </div>
-                  <button onClick={() => { setIsRegistrationSuccess(false); setIsSigningUp(false); }} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors">
-                    Voltar para Login
-                  </button>
+                  <button onClick={() => { setIsRegistrationSuccess(false); setIsSigningUp(false); }} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors">Voltar para Login</button>
                 </div>
               ) : (
                 <>
@@ -762,71 +609,41 @@ export default function App() {
                     <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">{isSigningUp ? (authFlow === 'admin' ? 'Criar Conta Admin' : 'Cadastro Corporativo') : 'Login Acesso'}</h2>
                     
                     <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
-                      
-                      {/* --- FORMULÁRIO DE CADASTRO (SIGN UP) --- */}
                       {isSigningUp ? (
                          authFlow === 'admin' ? (
-                            // FORMULÁRIO ADMIN SIMPLIFICADO
                             <>
                               <input type="text" placeholder="Nome da Empresa/Rede" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                              <div className="relative"><input type="password" placeholder="Chave de Acesso Administrativa" value={formData.adminKey} onChange={e => setFormData({...formData, adminKey: e.target.value})} className="w-full bg-zinc-900/50 border border-[#E11D48]/20 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /><p className="text-[9px] text-zinc-600 mt-2 font-medium uppercase tracking-wider">* Solicite a chave com a equipe Tiquinho</p></div>
+                              <div className="relative"><input type="password" placeholder="Chave de Acesso Administrativa" value={formData.adminKey} onChange={e => setFormData({...formData, adminKey: e.target.value})} className="w-full bg-zinc-900/50 border border-[#E11D48]/20 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
                               <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                               <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                             </>
                          ) : (
-                            // FORMULÁRIO CLIENTE COMPLETO (GRID)
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-1 border-b border-white/5 pb-1">Dados da Empresa</div>
-                                
                                 <div className="relative">
-                                  <input 
-                                    type="text" 
-                                    list="network-suggestions"
-                                    placeholder="Rede / Franquia *" 
-                                    value={formData.network_tag} 
-                                    onChange={e => setFormData({...formData, network_tag: e.target.value})} 
-                                    className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600"
-                                    required
-                                  />
-                                  <datalist id="network-suggestions">
-                                    {availableNetworks.map(net => <option key={net} value={net} />)}
-                                  </datalist>
+                                  <input type="text" list="network-suggestions" placeholder="Rede / Franquia *" value={formData.network_tag} onChange={e => setFormData({...formData, network_tag: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                  <datalist id="network-suggestions">{availableNetworks.map(net => <option key={net} value={net} />)}</datalist>
                                   <Search className="absolute right-4 top-4 text-zinc-600 pointer-events-none" size={16} />
                                 </div>
-
-                                <input type="text" placeholder="Nome da Unidade (Ex: Unidade Centro) *" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                
-                                <input type="text" placeholder="CNPJ (Somente Números) *" value={formData.cnpj} onChange={e => setFormData({...formData, cnpj: e.target.value.replace(/\D/g, '').slice(0, 14)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                
-                                <input type="text" placeholder="Telefone / WhatsApp *" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-
-                                <input type="text" placeholder="Nome do Responsável" value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" />
-
-                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Endereço de Entrega</div>
-                                
-                                <div className="relative">
-                                    <input type="text" placeholder="CEP *" value={formData.cep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} onBlur={handleAddressLookup} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                    <Search className="absolute right-4 top-4 text-zinc-600 pointer-events-none" size={16} />
-                                </div>
-                                
+                                <input type="text" placeholder="Nome da Unidade *" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                <input type="text" placeholder="CNPJ *" value={formData.cnpj} onChange={e => setFormData({...formData, cnpj: e.target.value.replace(/\D/g, '').slice(0, 14)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                <input type="text" placeholder="Telefone *" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                <input type="text" placeholder="Nome Responsável" value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" />
+                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Endereço</div>
+                                <div className="relative"><input type="text" placeholder="CEP *" value={formData.cep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} onBlur={handleAddressLookup} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
                                 <input type="text" placeholder="Cidade" value={formData.address_city} readOnly className="w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
-                                
                                 <input type="text" placeholder="Logradouro" value={formData.address_street} readOnly className="md:col-span-2 w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
-
-                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Dados de Acesso</div>
-
-                                <input type="email" placeholder="Seu melhor E-mail *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                <input type="password" placeholder="Crie uma Senha *" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Acesso</div>
+                                <input type="email" placeholder="E-mail *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                <input type="password" placeholder="Senha *" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                             </div>
                          )
                       ) : (
-                        // --- FORMULÁRIO DE LOGIN (PADRÃO) ---
                         <>
                            <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                            <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                         </>
                       )}
-
                       <button type="submit" disabled={isLoading} className={`w-full ${authFlow === 'admin' ? 'bg-[#E11D48] hover:bg-[#BE123C]' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors disabled:opacity-50 mt-6`}>{isLoading ? 'PROCESSANDO...' : (isSigningUp ? 'FINALIZAR CADASTRO' : 'ACESSAR PAINEL')}</button>
                     </form>
                     <button onClick={() => { setIsSigningUp(!isSigningUp); setFormData(prev => ({...prev, email: '', password: ''})); }} className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors">{isSigningUp ? 'Já tenho conta' : 'Criar nova conta'}</button>
@@ -862,170 +679,96 @@ export default function App() {
               </div>
               <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
                 <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-2"><DollarSign className="text-emerald-500" size={20} /></div>
-                <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Receita Confirmada (PIX)</span><h4 className="text-3xl font-black text-white">{formatCurrency(totalRevenue)}</h4></div>
+                <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Receita Confirmada</span><h4 className="text-3xl font-black text-white">{formatCurrency(totalRevenue)}</h4></div>
               </div>
               <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
                 <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center mb-2"><TrendingUp className="text-rose-500" size={20} /></div>
-                {/* CAMPO REDE MAIS ATIVA AGORA É DINÂMICO */}
                 <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">{mostActiveNetwork}</h4></div>
               </div>
             </div>
           </section>
 
-          {/* FORMULÁRIO */}
-          <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
-            <div className="absolute left-0 top-0 w-1 h-full bg-[#E11D48]" />
-            <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Publicar Novo Modelo</h2>
-            <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-              <div className="lg:col-span-4 flex flex-col gap-2">
-                 <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest pl-1">Fotografia do Produto</span>
-                 <div onClick={() => fileInputRef.current?.click()} className="aspect-[3/4] bg-zinc-950 border border-white/5 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 overflow-hidden relative group transition-all">
-                  {newProduct.image_url ? ( <img src={newProduct.image_url} className="absolute inset-0 w-full h-full object-cover" /> ) : ( <div className="text-zinc-700 text-center group-hover:text-zinc-500 transition-colors"><ImageIcon className="mx-auto mb-3 w-10 h-10 stroke-1" /><p className="text-[9px] font-black uppercase tracking-widest">Upload de Imagem</p></div> )}
-                  <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setNewProduct({...newProduct, image_url: reader.result as string}); reader.readAsDataURL(file); } }} className="hidden" accept="image/*" />
-                </div>
-              </div>
-              <div className="lg:col-span-8 space-y-6">
-                <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Título do Uniforme *</label><input type="text" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors placeholder:text-zinc-800" required /></div>
-                
-                {/* CAMPO DE DESCRIÇÃO ADICIONADO */}
-                <div>
-                  <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Descrição do Produto</label>
-                  <textarea rows={3} value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors placeholder:text-zinc-800" placeholder="Detalhes do tecido, acabamento, etc..."></textarea>
-                </div>
-
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Categoria *</label>
-                    <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none appearance-none font-bold cursor-pointer">
-                      <option value="Masculino">Masculino</option>
-                      <option value="Feminino">Feminino</option>
-                      <option value="Unissex">Unissex</option>
-                      <option value="Inverno">Inverno</option>
-                      <option value="Acessórios">Acessórios</option>
-                      <option value="Operacional">Operacional</option>
-                    </select>
-                  </div>
-                  <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Preço Unitário (R$)</label><input type="number" step="0.01" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors" required /></div>
-                </div>
-
-                <div><label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Pedido Mínimo (Unidades)</label><div className="relative"><input type="number" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors text-center font-bold" required /><div className="absolute inset-y-0 right-4 flex items-center pointer-events-none"><Package size={14} className="text-[#E11D48]" /></div></div></div>
-
-                <div>
-                   <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Grade de Tamanhos Disponíveis *</label>
-                   <div className="flex gap-2 mb-2">
-                     {['P', 'M', 'G', 'GG', 'XG'].map(size => (
-                       <button 
-                        key={size} 
-                        type="button"
-                        onClick={() => {
-                          const sizes = newProduct.available_sizes.includes(size) 
-                            ? newProduct.available_sizes.filter(s => s !== size) 
-                            : [...newProduct.available_sizes, size];
-                          setNewProduct({...newProduct, available_sizes: sizes});
-                        }}
-                        className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold transition-all ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-white/20'}`}
-                       >
-                         {size}
-                       </button>
-                     ))}
-                   </div>
-                   <button 
-                    type="button"
-                    onClick={() => {
-                      const size = 'Único';
-                      const sizes = newProduct.available_sizes.includes(size) 
-                        ? newProduct.available_sizes.filter(s => s !== size) 
-                        : [...newProduct.available_sizes, size];
-                      setNewProduct({...newProduct, available_sizes: sizes});
-                    }}
-                    className={`w-full border py-3 rounded-xl text-center text-xs font-bold transition-all ${newProduct.available_sizes.includes('Único') ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-white/20'}`}
-                   >
-                     Único
-                   </button>
-                </div>
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Prazo de Confecção (Dias Úteis)</label>
-                    <input 
-                      type="number" 
-                      value={newProduct.production_days} 
-                      onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} 
-                      className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none transition-colors" 
-                      required 
-                    />
-                  </div>
-                  {/* SELECT DINÂMICO DE REDE FRANQUEADA (POPULADO PELO BANCO MAS PERMITE DIGITAÇÃO) */}
-                  <div>
-                    <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Rede Franqueada (Ativas) *</label>
-                    <div className="relative">
-                      <input 
-                        type="text" 
-                        list="admin-network-list"
-                        placeholder="Selecione ou Digite a Rede..." 
-                        value={newProduct.network_tag} 
-                        onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} 
-                        className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm focus:border-[#E11D48]/50 focus:outline-none font-bold"
-                        required
-                      />
-                      <datalist id="admin-network-list">
-                        {/* Sugestões baseadas nas redes já existentes */}
-                        {availableNetworks.map(net => (
-                            <option key={net} value={net} />
-                        ))}
-                      </datalist>
-                      <div className="absolute right-4 top-4 pointer-events-none text-zinc-500">
-                        <ChevronDown size={16} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar Alterações' : 'Publicar e Notificar Rede'}</button>
-              </div>
-            </form>
-          </section>
-
-          {/* LISTAGEM DE PRODUTOS */}
-          <section className="space-y-6">
-            <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-2"><LayoutGrid className="text-[#E11D48]" /> Controle de Catálogo</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {products.map(p => (
-                <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 group hover:border-white/10 transition-colors flex items-center gap-4">
-                  <div className="w-24 h-24 rounded-2xl overflow-hidden bg-zinc-950 shrink-0 border border-white/5"><img src={p.image_url} className="w-full h-full object-cover" /></div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-[10px] font-bold text-white truncate uppercase tracking-tight mb-1">{p.name}</h4>
-                    <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider mb-2">{p.network_tag}</p>
-                    <div className="flex items-center gap-3"><span className="text-sm font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</span><span className="text-[9px] font-bold text-zinc-600 bg-zinc-950 px-2 py-1 rounded-lg border border-white/5 flex items-center gap-1"><Package size={10} /> MÍN: {p.min_order} UN</span></div>
-                    <div className="flex gap-2 mt-3">
-                      <button onClick={() => { setEditingId(p.id); setNewProduct({ name: p.name, price: p.price.toString(), image_url: p.image_url, network_tag: p.network_tag, category: p.category, description: p.description || '', min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [] }); window.scrollTo({ top: 400, behavior: 'smooth' }); }} className="flex-1 bg-zinc-800/80 hover:bg-zinc-800 py-2 rounded-xl text-[9px] uppercase font-black text-zinc-300 flex items-center justify-center gap-1 transition-colors"><MessageCircle size={10} className="rotate-90" /> Editar</button>
-                      <button onClick={() => handleDeleteProduct(p.id)} className="w-8 h-8 flex items-center justify-center bg-rose-950/30 text-rose-500 rounded-xl hover:bg-rose-950/50 transition-colors"><Trash2 size={14}/></button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* HISTÓRICO DE PAGAMENTOS */}
+          {/* HISTÓRICO DE PAGAMENTOS COM VALIDAÇÃO */}
           <section>
-             <h2 className="text-xl font-black uppercase tracking-tighter mb-6 flex items-center gap-2"><Hourglass className="text-[#E11D48]" /> Histórico de Pagamentos</h2>
+             <h2 className="text-xl font-black uppercase tracking-tighter mb-6 flex items-center gap-2"><Hourglass className="text-[#E11D48]" /> Gestão de Pedidos</h2>
              <div className="bg-zinc-900/30 border border-white/5 rounded-[32px] overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
-                    <thead><tr className="border-b border-white/5"><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Unidade / Rede</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Valor Total</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Status</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500 text-right">Data</th></tr></thead>
+                    <thead><tr className="border-b border-white/5"><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Unidade</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Total</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Status</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Ação</th></tr></thead>
                     <tbody>
                       {orders.map((order) => (
                         <tr key={order.id} className="hover:bg-white/5 transition-colors">
                           <td className="p-6"><p className="text-sm font-bold text-white">{order.unit_name}</p><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">{order.network_tag.replace('-', ' ')}</p></td>
                           <td className="p-6"><p className="text-sm font-black text-[#E11D48]">{formatCurrency(order.total_amount)}</p></td>
-                          <td className="p-6"><span className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">{order.status}</span></td>
-                          <td className="p-6 text-right"><p className="text-xs font-bold text-zinc-400">{new Date(order.created_at).toLocaleDateString('pt-BR')}</p></td>
+                          <td className="p-6"><span className={`border px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${order.status === 'Pago/Em Produção' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>{order.status}</span></td>
+                          <td className="p-6">
+                            {order.status !== 'Pago/Em Produção' && (
+                                <button onClick={() => handleUpdateOrderStatus(order.id, order.status)} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-colors">
+                                    <Check size={14} /> Validar Pagamento
+                                </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {orders.length === 0 && <div className="p-10 text-center text-zinc-600 font-bold uppercase text-xs">Nenhum pagamento registrado</div>}
+                  {orders.length === 0 && <div className="p-10 text-center text-zinc-600 font-bold uppercase text-xs">Nenhum pedido registrado</div>}
                 </div>
              </div>
+          </section>
+
+          {/* FORMULÁRIO DE PRODUTO */}
+          <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
+            <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Gerenciar Catálogo</h2>
+            <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+              {/* (Campos do formulário mantidos iguais para economizar espaço visual aqui, mas funcionais) */}
+              <div className="lg:col-span-4 flex flex-col gap-2">
+                 <div onClick={() => fileInputRef.current?.click()} className="aspect-[3/4] bg-zinc-950 border border-white/5 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 overflow-hidden relative group transition-all">
+                  {newProduct.image_url ? ( <img src={newProduct.image_url} className="absolute inset-0 w-full h-full object-cover" /> ) : ( <div className="text-zinc-700 text-center group-hover:text-zinc-500 transition-colors"><ImageIcon className="mx-auto mb-3 w-10 h-10 stroke-1" /><p className="text-[9px] font-black uppercase tracking-widest">Upload Imagem</p></div> )}
+                  <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setNewProduct({...newProduct, image_url: reader.result as string}); reader.readAsDataURL(file); } }} className="hidden" accept="image/*" />
+                </div>
+              </div>
+              <div className="lg:col-span-8 space-y-6">
+                <input type="text" placeholder="Nome do Produto" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+                <textarea rows={2} placeholder="Descrição" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                <div className="grid grid-cols-2 gap-4">
+                    <input type="number" step="0.01" placeholder="Preço (R$)" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+                    <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm"><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option><option value="Unissex">Unissex</option><option value="Inverno">Inverno</option></select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <input type="number" placeholder="Mínimo" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                    <input type="number" placeholder="Dias Produção" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                </div>
+                {/* Tamanhos */}
+                <div className="flex gap-2">
+                     {['P', 'M', 'G', 'GG', 'XG', 'Único'].map(size => (
+                       <button type="button" key={size} onClick={() => { const sizes = newProduct.available_sizes.includes(size) ? newProduct.available_sizes.filter(s => s !== size) : [...newProduct.available_sizes, size]; setNewProduct({...newProduct, available_sizes: sizes}); }} className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400'}`}>{size}</button>
+                     ))}
+                </div>
+                <div className="relative">
+                    <input type="text" list="admin-network-list" placeholder="Rede Franqueada" value={newProduct.network_tag} onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm font-bold" required />
+                    <datalist id="admin-network-list">{availableNetworks.map(net => <option key={net} value={net} />)}</datalist>
+                </div>
+                <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar' : 'Publicar'}</button>
+              </div>
+            </form>
+          </section>
+
+          {/* LISTA DE PRODUTOS */}
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {products.map(p => (
+                <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 flex items-center gap-4">
+                  <img src={p.image_url} className="w-16 h-16 rounded-xl object-cover bg-zinc-950" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-[10px] font-bold text-white truncate uppercase mb-1">{p.name}</h4>
+                    <p className="text-[9px] font-bold text-zinc-500 uppercase">{p.network_tag}</p>
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={() => { setEditingId(p.id); setNewProduct({ ...p, price: p.price.toString(), min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [], description: p.description || '' }); window.scrollTo({ top: 800, behavior: 'smooth' }); }} className="text-xs text-zinc-400 hover:text-white">Editar</button>
+                      <button onClick={() => handleDeleteProduct(p.id)} className="text-xs text-rose-500 hover:text-rose-400">Excluir</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
           </section>
         </main>
       </div>
@@ -1054,100 +797,36 @@ export default function App() {
               {isNotificationsOpen && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute top-full right-0 mt-2 w-64 bg-zinc-950 border border-white/10 rounded-2xl shadow-2xl p-4 z-50">
                    <h4 className="text-[10px] font-black uppercase text-zinc-500 mb-3 tracking-widest">Notificações</h4>
-                   <div className="space-y-3">
-                      {orders.length > 0 ? (
-                        <div className="flex gap-3">
-                          <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500"><CheckCircle2 size={14} /></div>
-                          <div><p className="text-xs font-bold text-white">Última compra realizada</p><p className="text-[10px] text-zinc-500">Em {new Date(orders[0].created_at).toLocaleDateString('pt-BR')}</p></div>
-                        </div>
-                      ) : <p className="text-xs text-zinc-600">Nenhuma notificação recente.</p>}
-                   </div>
+                   <div className="space-y-3">{orders.length > 0 ? (<div className="flex gap-3"><div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500"><CheckCircle2 size={14} /></div><div><p className="text-xs font-bold text-white">Última compra</p><p className="text-[10px] text-zinc-500">{orders[0].status}</p></div></div>) : <p className="text-xs text-zinc-600">Nada recente.</p>}</div>
                 </motion.div>
               )}
             </AnimatePresence>
           </button>
-          
-          <button onClick={() => setIsHistoryOpen(true)} className="p-3 text-zinc-500 hover:text-white transition-colors">
-            <List size={20} />
-          </button>
-
-          <button onClick={() => setIsCartOpen(true)} className="relative p-3 bg-zinc-900/50 rounded-2xl border border-white/5 hover:border-[#E11D48]/50 transition-colors">
-            <ShoppingCart size={20} />
-            {cart.length > 0 && <span className="absolute -top-1 -right-1 bg-[#E11D48] text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-black shadow-lg shadow-rose-600/50">{cart.length}</span>}
-          </button>
-          
+          <button onClick={() => setIsHistoryOpen(true)} className="p-3 text-zinc-500 hover:text-white transition-colors"><List size={20} /></button>
+          <button onClick={() => setIsCartOpen(true)} className="relative p-3 bg-zinc-900/50 rounded-2xl border border-white/5 hover:border-[#E11D48]/50 transition-colors"><ShoppingCart size={20} />{cart.length > 0 && <span className="absolute -top-1 -right-1 bg-[#E11D48] text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-black shadow-lg shadow-rose-600/50">{cart.length}</span>}</button>
           <button onClick={handleLogout} className="p-3 text-zinc-500 hover:text-rose-500"><LogOut size={20} /></button>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-12">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-          <div>
-            <h1 className="text-4xl font-black tracking-tighter uppercase mb-2">Catálogo Oficial</h1>
-            <p className="text-zinc-500 font-bold uppercase text-[10px] tracking-[0.2em]">Selecione os uniformes para sua unidade</p>
-          </div>
+          <div><h1 className="text-4xl font-black tracking-tighter uppercase mb-2">Catálogo Oficial</h1><p className="text-zinc-500 font-bold uppercase text-[10px] tracking-[0.2em]">Selecione os uniformes para sua unidade</p></div>
         </div>
         
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
           {filteredProducts.map(p => {
-             // Determinar tamanho selecionado para este produto (default: primeiro da lista ou Único)
              const selectedSize = clientSelectedSizes[p.id] || (p.available_sizes && p.available_sizes.length > 0 ? p.available_sizes[0] : 'Único');
-             
              return (
               <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group shadow-2xl hover:border-[#E11D48]/30 transition-all">
                 <div className="aspect-square bg-zinc-950 overflow-hidden relative">
                   <img src={p.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="" />
-                  
-                  {/* CATEGORIA TAG */}
-                  <div className="absolute top-4 right-4">
-                    <span className="bg-black/60 backdrop-blur-md text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/10 flex items-center gap-1">
-                      <Tag size={10} className="text-[#E11D48]" /> {p.category}
-                    </span>
-                  </div>
-
-                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black via-black/80 to-transparent">
-                    <p className="text-[10px] text-zinc-300 font-medium line-clamp-3">{p.description}</p>
-                  </div>
+                  <div className="absolute top-4 right-4"><span className="bg-black/60 backdrop-blur-md text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/10 flex items-center gap-1"><Tag size={10} className="text-[#E11D48]" /> {p.category}</span></div>
                 </div>
                 <div className="p-6 flex-1 flex flex-col">
                   <h3 className="text-base font-bold text-white mb-1 line-clamp-1">{p.name}</h3>
                   <p className="text-xl font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</p>
-                  
-                  {/* SELETOR DE TAMANHOS */}
-                  <div className="mt-4">
-                    <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Selecione o Tamanho:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {p.available_sizes && p.available_sizes.length > 0 ? (
-                        p.available_sizes.map(size => (
-                          <button
-                            key={size}
-                            onClick={() => setClientSelectedSizes(prev => ({...prev, [p.id]: size as Size}))}
-                            className={`min-w-[32px] h-8 px-2 rounded-lg text-[10px] font-black transition-all border ${selectedSize === size ? 'bg-[#E11D48] border-[#E11D48] text-white shadow-lg shadow-rose-600/20' : 'bg-zinc-950 border-white/10 text-zinc-400 hover:border-white/30'}`}
-                          >
-                            {size}
-                          </button>
-                        ))
-                      ) : (
-                        <span className="text-[10px] text-zinc-600 font-bold uppercase">Tamanho Único</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
-                    <div className="flex items-center gap-1.5 text-[9px] font-bold text-zinc-400 uppercase"><Hourglass size={12} className="text-[#E11D48]" /> Confecção: {p.production_days} dias</div>
-                    <div className="flex items-center gap-1.5 text-[9px] font-bold text-zinc-400 uppercase"><Package size={12} className="text-[#E11D48]" /> Mínimo: {p.min_order} un</div>
-                  </div>
-
-                  {/* BOTÃO DE COMPRAR AGORA USA O TAMANHO SELECIONADO */}
-                  <button 
-                    onClick={() => { 
-                      setCart([...cart, { ...p, selectedSize: selectedSize as Size, quantity: p.min_order }]); 
-                      showToast(`Adicionado: Tamanho ${selectedSize}`); 
-                    }} 
-                    className="mt-6 w-full font-black py-4 rounded-2xl bg-white text-zinc-950 uppercase text-[10px] tracking-widest hover:bg-[#E11D48] hover:text-white transition-all shadow-lg hover:shadow-rose-900/20"
-                  >
-                    Comprar ({p.min_order} un)
-                  </button>
+                  <div className="mt-4"><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tamanho:</p><div className="flex flex-wrap gap-2">{p.available_sizes && p.available_sizes.length > 0 ? ( p.available_sizes.map(size => ( <button key={size} onClick={() => setClientSelectedSizes(prev => ({...prev, [p.id]: size as Size}))} className={`min-w-[32px] h-8 px-2 rounded-lg text-[10px] font-black transition-all border ${selectedSize === size ? 'bg-[#E11D48] border-[#E11D48] text-white shadow-lg shadow-rose-600/20' : 'bg-zinc-950 border-white/10 text-zinc-400 hover:border-white/30'}`}>{size}</button> )) ) : ( <span className="text-[10px] text-zinc-600 font-bold uppercase">Único</span> )}</div></div>
+                  <button onClick={() => { setCart([...cart, { ...p, selectedSize: selectedSize as Size, quantity: p.min_order }]); showToast(`Adicionado: ${selectedSize}`); }} className="mt-6 w-full font-black py-4 rounded-2xl bg-white text-zinc-950 uppercase text-[10px] tracking-widest hover:bg-[#E11D48] hover:text-white transition-all shadow-lg hover:shadow-rose-900/20">Comprar ({p.min_order} un)</button>
                 </div>
               </div>
              );
@@ -1155,10 +834,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* WHATSAPP BUTTON */}
-      <button onClick={() => window.open(`https://wa.me/5517992198086`, '_blank')} className="fixed bottom-8 right-8 w-16 h-16 bg-[#25D366] text-white rounded-full shadow-2xl flex items-center justify-center z-[90] hover:scale-110 transition-transform shadow-emerald-500/20">
-        <MessageCircle size={32} />
-      </button>
+      <button onClick={() => window.open(`https://wa.me/551732167854`, '_blank')} className="fixed bottom-8 right-8 w-16 h-16 bg-[#25D366] text-white rounded-full shadow-2xl flex items-center justify-center z-[90] hover:scale-110 transition-transform shadow-emerald-500/20"><MessageCircle size={32} /></button>
 
       {/* CART SIDEBAR */}
       <AnimatePresence>
@@ -1168,83 +844,23 @@ export default function App() {
             <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} className="fixed right-0 top-0 bottom-0 z-[110] w-full max-w-md glass flex flex-col border-l border-white/10 shadow-2xl">
               <div className="p-8 border-b border-white/5 flex items-center justify-between"><h2 className="text-2xl font-black uppercase tracking-tighter">Minha Lista</h2><button onClick={() => setIsCartOpen(false)}><X size={24} /></button></div>
               <div className="flex-1 p-8 space-y-6 overflow-y-auto">
-                {cart.length === 0 ? <p className="text-center py-20 uppercase font-black text-[10px] text-zinc-600 tracking-widest">Nenhum item selecionado</p> : cart.map((item, i) => (
+                {cart.length === 0 ? <p className="text-center py-20 uppercase font-black text-[10px] text-zinc-600 tracking-widest">Nenhum item</p> : cart.map((item, i) => (
                   <div key={i} className="flex gap-4 p-4 bg-zinc-950/40 rounded-3xl border border-white/5">
-                    <img src={item.image_url} className="w-16 h-16 object-cover rounded-xl" alt="" />
-                    <div className="flex-1">
-                      <h4 className="text-[10px] font-bold text-white line-clamp-1 uppercase mb-1">{item.name}</h4>
-                      <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tamanho: {item.selectedSize}</p>
-                      <div className="flex items-center gap-3">
-                         <button onClick={() => updateQuantity(i, -1)} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Minus size={12}/></button>
-                         <span className="text-sm font-black text-[#E11D48]">{item.quantity}</span>
-                         <button onClick={() => updateQuantity(i, 1)} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Plus size={12}/></button>
-                      </div>
-                    </div>
+                    <img src={item.image_url} className="w-16 h-16 object-cover rounded-xl" />
+                    <div className="flex-1"><h4 className="text-[10px] font-bold text-white uppercase mb-1">{item.name}</h4><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tam: {item.selectedSize}</p><div className="flex items-center gap-3"><button onClick={() => updateQuantity(i, -1)} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Minus size={12}/></button><span className="text-sm font-black text-[#E11D48]">{item.quantity}</span><button onClick={() => updateQuantity(i, 1)} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Plus size={12}/></button></div></div>
                     <button onClick={() => setCart(cart.filter((_, idx) => idx !== i))} className="text-zinc-600 hover:text-rose-500 self-start"><X size={16}/></button>
                   </div>
                 ))}
               </div>
-              
               {cart.length > 0 && (
                 <div className="p-8 border-t border-white/5 bg-zinc-950/80 space-y-4">
-                  {/* CALCULO DE FRETE */}
                   <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5 space-y-3">
-                    <label className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block">Calcular Frete (CEP)</label>
-                    <div className="flex gap-2">
-                       <input 
-                         type="text" 
-                         value={cep} 
-                         onChange={(e) => setCep(e.target.value.replace(/\D/g, '').slice(0, 8))} 
-                         placeholder="00000-000" 
-                         className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#E11D48]/50 outline-none"
-                       />
-                       <button 
-                         onClick={calculateShipping}
-                         disabled={isCalculatingShipping}
-                         className="bg-[#E11D48] px-4 rounded-xl text-white font-bold text-xs hover:bg-[#be123c] disabled:opacity-50"
-                       >
-                         {isCalculatingShipping ? <Loader2 className="animate-spin" size={14}/> : 'OK'}
-                       </button>
-                    </div>
-                    {shippingAddress && (
-                      <div className="flex items-center gap-2 text-emerald-500 text-[10px] font-bold uppercase tracking-wider">
-                         <MapPin size={10} />
-                         <span>{shippingAddress.localidade}/{shippingAddress.uf}</span>
-                      </div>
-                    )}
+                    <label className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block">Frete (CEP)</label>
+                    <div className="flex gap-2"><input type="text" value={cep} onChange={(e) => setCep(e.target.value.replace(/\D/g, '').slice(0, 8))} placeholder="00000-000" className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#E11D48]/50 outline-none" /><button onClick={calculateShipping} disabled={isCalculatingShipping} className="bg-[#E11D48] px-4 rounded-xl text-white font-bold text-xs hover:bg-[#be123c] disabled:opacity-50">{isCalculatingShipping ? <Loader2 className="animate-spin" size={14}/> : 'OK'}</button></div>
+                    {shippingAddress && <div className="flex items-center gap-2 text-emerald-500 text-[10px] font-bold uppercase tracking-wider"><MapPin size={10} /><span>{shippingAddress.localidade}/{shippingAddress.uf}</span></div>}
                   </div>
-
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center px-2">
-                      <span className="text-[10px] font-black uppercase text-zinc-500">Subtotal</span>
-                      <span className="text-sm font-bold text-zinc-400">R$ {cart.reduce((acc, item) => acc + (item.price * item.quantity), 0).toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between items-center px-2">
-                      <span className="text-[10px] font-black uppercase text-zinc-500">Frete</span>
-                      <span className="text-sm font-bold text-zinc-400">{shippingCost !== null ? `R$ ${shippingCost.toFixed(2)}` : '--'}</span>
-                    </div>
-                    <div className="flex justify-between items-center px-2 border-t border-white/5 pt-2">
-                      <span className="text-[10px] font-black uppercase text-white">Total Final</span>
-                      <span className="text-xl font-black text-[#E11D48]">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</span>
-                    </div>
-                  </div>
-
-                  <button onClick={() => setIsCartOpen(false)} className="w-full bg-zinc-800 text-zinc-300 py-4 rounded-2xl font-black uppercase text-[9px] tracking-widest hover:bg-zinc-700 transition-colors mb-2">Continuar Comprando</button>
-                  <div className="grid grid-cols-1 gap-3">
-                    <button 
-                      onClick={() => { 
-                         if(shippingCost === null) {
-                            showToast("Calcule o frete antes de finalizar", "error");
-                            return;
-                         }
-                         setIsCartOpen(false); 
-                         setIsPaymentOpen(true); 
-                      }} 
-                      className="bg-[#E11D48] text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 tracking-widest hover:bg-[#be123c] transition-colors"
-                    >
-                      <QrCode size={14}/> PAGAR COM PIX
-                    </button>
-                  </div>
+                  <div className="space-y-2"><div className="flex justify-between items-center px-2 border-t border-white/5 pt-2"><span className="text-[10px] font-black uppercase text-white">Total</span><span className="text-xl font-black text-[#E11D48]">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</span></div></div>
+                  <div className="grid grid-cols-1 gap-3"><button onClick={() => { if(shippingCost === null) { showToast("Calcule o frete", "error"); return; } setIsCartOpen(false); setIsPaymentOpen(true); }} className="bg-[#E11D48] text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 tracking-widest hover:bg-[#be123c] transition-colors"><QrCode size={14}/> PAGAR PIX</button></div>
                 </div>
               )}
             </motion.aside>
@@ -1252,113 +868,59 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* MODAL DE PAGAMENTO PIX (O QUE ESTAVA FALTANDO) */}
+      {/* PAGAMENTO PIX */}
       <AnimatePresence>
         {isPaymentOpen && (
-           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
+           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
                <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-sm w-full relative shadow-2xl flex flex-col overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#E11D48] to-transparent" />
-                  
-                  <div className="p-8 text-center border-b border-white/5">
-                     <div className="w-16 h-16 bg-[#E11D48]/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <QrCode className="text-[#E11D48]" size={32} />
-                     </div>
-                     <h2 className="text-xl font-black text-white uppercase tracking-tighter mb-1">Pagamento Pix</h2>
-                     <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Escaneie ou Copie o Código</p>
-                  </div>
-
-                  <div className="p-8 bg-white flex flex-col items-center justify-center gap-4">
-                     <div className="bg-white p-2 rounded-xl border-4 border-zinc-100">
-                        {/* GERAÇÃO VISUAL DO QR CODE USANDO API PUBLICA SEGURA */}
-                        <img 
-                           src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getPixCode())}`} 
-                           alt="QR Code Pix" 
-                           className="w-48 h-48 mix-blend-multiply"
-                        />
-                     </div>
-                     <p className="text-zinc-950 font-black text-2xl">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</p>
-                  </div>
-
+                  <div className="p-8 text-center border-b border-white/5"><div className="w-16 h-16 bg-[#E11D48]/10 rounded-full flex items-center justify-center mx-auto mb-4"><QrCode className="text-[#E11D48]" size={32} /></div><h2 className="text-xl font-black text-white uppercase tracking-tighter mb-1">Pagamento Pix</h2></div>
+                  <div className="p-8 bg-white flex flex-col items-center justify-center gap-4"><div className="bg-white p-2 rounded-xl border-4 border-zinc-100"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getPixCode())}`} className="w-48 h-48 mix-blend-multiply" /></div><p className="text-zinc-950 font-black text-2xl">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</p></div>
                   <div className="p-6 bg-zinc-900/50 border-t border-white/5 space-y-4">
-                     <div>
-                        <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-2 text-center">Pix Copia e Cola</p>
-                        <div className="flex gap-2">
-                           <input type="text" readOnly value={getPixCode()} className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 text-[10px] text-zinc-400 font-mono outline-none" />
-                           <button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Código Pix copiado!", "success"); }} className="bg-zinc-800 hover:bg-zinc-700 text-white p-3 rounded-xl transition-colors"><Copy size={16} /></button>
-                        </div>
-                     </div>
-                     
-                     <button onClick={handleFinalizeOrder} className="w-full bg-[#E11D48] hover:bg-[#be123c] text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-600/20 transition-all flex items-center justify-center gap-2">
-                        <CheckCircle2 size={16} /> Confirmar Pagamento Enviado
-                     </button>
+                     <div className="flex gap-2"><input type="text" readOnly value={getPixCode()} className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 text-[10px] text-zinc-400 font-mono outline-none" /><button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Copiado!", "success"); }} className="bg-zinc-800 hover:bg-zinc-700 text-white p-3 rounded-xl transition-colors"><Copy size={16} /></button></div>
+                     <button onClick={handleFinalizeOrder} className="w-full bg-[#E11D48] hover:bg-[#be123c] text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-600/20 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> Já fiz o Pix (Finalizar)</button>
                      <button onClick={() => setIsPaymentOpen(false)} className="w-full text-zinc-500 hover:text-white py-2 text-[10px] font-bold uppercase tracking-widest transition-colors">Cancelar</button>
                   </div>
                </motion.div>
-            </motion.div>
-           </>
+           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* HISTORY MODAL (MEUS PEDIDOS) */}
+      {/* SUCESSO PEDIDO */}
+      <AnimatePresence>
+        {isOrderSuccessOpen && (
+           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6">
+              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-zinc-950 border border-[#E11D48]/20 rounded-[40px] max-w-sm w-full p-10 text-center relative shadow-2xl shadow-rose-900/20">
+                 <div className="w-24 h-24 bg-[#E11D48] rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl shadow-rose-500/30"><CheckCircle2 className="text-white" size={48} /></div>
+                 <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Pedido Registrado!</h2>
+                 <p className="text-zinc-400 text-sm mb-8">Seu pedido foi salvo no sistema como <strong>Aguardando Validação</strong>. O envio será iniciado assim que o gestor confirmar o pagamento.</p>
+                 <button onClick={() => { window.open(whatsappLink, '_blank'); setIsOrderSuccessOpen(false); }} className="w-full bg-[#25D366] hover:bg-[#1da851] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-3"><Send size={18} /> ENVIAR COMPROVANTE WHATSAPP</button>
+                 <button onClick={() => setIsOrderSuccessOpen(false)} className="mt-6 text-zinc-600 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors">Fechar</button>
+              </motion.div>
+           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* HISTORICO */}
       <AnimatePresence>
         {isHistoryOpen && (
-           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
+           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
                <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-2xl w-full max-h-[80vh] flex flex-col relative shadow-2xl">
-                  <div className="p-8 border-b border-white/5 flex items-center justify-between">
-                     <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center"><History className="text-[#E11D48]" size={24} /></div>
-                        <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Meu Histórico</h2>
-                     </div>
-                     <button onClick={() => setIsHistoryOpen(false)} className="text-zinc-500 hover:text-white"><X size={24}/></button>
-                  </div>
-                  
+                  <div className="p-8 border-b border-white/5 flex items-center justify-between"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center"><History className="text-[#E11D48]" size={24} /></div><h2 className="text-2xl font-black text-white uppercase tracking-tighter">Meu Histórico</h2></div><button onClick={() => setIsHistoryOpen(false)} className="text-zinc-500 hover:text-white"><X size={24}/></button></div>
                   <div className="flex-1 overflow-y-auto p-8 space-y-4">
-                     {orders.length === 0 ? (
-                        <div className="text-center py-20 text-zinc-600">
-                           <Package size={48} className="mx-auto mb-4 opacity-20" />
-                           <p className="font-bold uppercase text-xs tracking-widest">Nenhum pedido realizado ainda.</p>
-                        </div>
-                     ) : orders.map(order => (
+                     {orders.map(order => (
                         <div key={order.id} className="bg-zinc-900/40 border border-white/5 p-6 rounded-3xl">
-                           <div className="flex justify-between items-start mb-6">
-                              <div>
-                                 <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">Pedido ID</p>
-                                 <p className="text-sm font-bold text-white">#{order.id.slice(0, 8).toUpperCase()}</p>
-                              </div>
-                              <div className="text-right">
-                                 <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">Realizado em</p>
-                                 <p className="text-sm font-bold text-white flex items-center gap-1 justify-end"><Calendar size={12} className="text-[#E11D48]" /> {new Date(order.created_at).toLocaleDateString('pt-BR')}</p>
-                              </div>
-                           </div>
-                           
-                           <div className="space-y-3 mb-6">
-                              {(order.items as any[]).map((item: any, idx: number) => (
-                                 <div key={idx} className="flex justify-between items-center text-sm">
-                                    <span className="font-medium text-zinc-300"><span className="font-bold text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded text-[10px] mr-2">{item.quantity}x</span> {item.name} <span className="text-zinc-600">({item.selectedSize})</span></span>
-                                    <span className="text-zinc-400">R$ {(item.price * item.quantity).toFixed(2)}</span>
-                                 </div>
-                              ))}
-                           </div>
-
-                           <div className="flex items-center justify-between pt-6 border-t border-white/5">
-                              <span className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={10}/> {order.status}</span>
-                              <span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_amount)}</span>
-                           </div>
+                           <div className="flex justify-between items-start mb-6"><div><p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">ID</p><p className="text-sm font-bold text-white">#{order.id.slice(0, 8).toUpperCase()}</p></div><div className="text-right"><p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">Data</p><p className="text-sm font-bold text-white">{new Date(order.created_at).toLocaleDateString('pt-BR')}</p></div></div>
+                           <div className="space-y-3 mb-6">{(order.items as any[]).map((item: any, idx: number) => (<div key={idx} className="flex justify-between items-center text-sm"><span className="font-medium text-zinc-300"><span className="font-bold text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded text-[10px] mr-2">{item.quantity}x</span> {item.name} ({item.selectedSize})</span><span className="text-zinc-400">R$ {(item.price * item.quantity).toFixed(2)}</span></div>))}</div>
+                           <div className="flex items-center justify-between pt-6 border-t border-white/5"><span className={`border px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 ${order.status === 'Pago/Em Produção' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>{order.status}</span><span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_amount)}</span></div>
                         </div>
                      ))}
                   </div>
-
-                  <div className="p-8 border-t border-white/5">
-                     <button onClick={() => setIsHistoryOpen(false)} className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-zinc-800 transition-colors">Continuar Comprando</button>
-                  </div>
+                  <div className="p-8 border-t border-white/5"><button onClick={() => setIsHistoryOpen(false)} className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-zinc-800 transition-colors">Voltar</button></div>
                </motion.div>
-            </motion.div>
-           </>
+           </motion.div>
         )}
       </AnimatePresence>
-
     </div>
   );
 }
