@@ -250,32 +250,55 @@ export default function App() {
     setIsLoading(true);
     const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (shippingCost || 0);
     
+    // PREPARA A MENSAGEM DO WHATSAPP ANTES (Para fallback)
+    const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
+    let msg = `*NOVO PEDIDO (Via Site)* 🚀\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens:*\n${itemsList}\n\n💰 *Total:* R$ ${total.toFixed(2)}`;
+    
     try {
-      // 1. INSERIR NO SUPABASE (STATUS: PENDENTE)
+      // 1. TENTA INSERIR NO SUPABASE
       const { data, error } = await supabase.from('orders').insert([{
         user_id: currentUser.id,
         unit_name: currentUser.unit_name,
         network_tag: currentUser.network_tag,
         items: cart,
         total_amount: total,
-        status: 'Pendente' // Aguardando validação do Admin
+        status: 'Pendente'
       }]).select();
 
+      // Se der erro no banco, LANÇA ERRO para cair no catch e usar WhatsApp
       if (error) throw error;
       
-      const orderId = data && data[0] ? data[0].id.slice(0, 8).toUpperCase() : '???';
-
-      // 2. GERAR LINK WHATSAPP
-      const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
-      const msg = `*NOVO PEDIDO #${orderId}* 🚀\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens:*\n${itemsList}\n\n💰 *Total:* R$ ${total.toFixed(2)}\n\n✅ *Comprovante Anexo:* (Envie a foto do PIX)`;
+      const orderId = data && data[0] ? data[0].id.slice(0, 8).toUpperCase() : 'APP';
+      msg = `*NOVO PEDIDO #${orderId}* 🚀\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens:*\n${itemsList}\n\n💰 *Total:* R$ ${total.toFixed(2)}\n\n✅ *Comprovante Anexo:* (Envie a foto do PIX)`;
       
       setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`);
       
-      // 3. UI UPDATES
+      // SUCESSO: ABRE MODAL DE SUCESSO PADRÃO
       setIsPaymentOpen(false); setIsCartOpen(false); setIsOrderSuccessOpen(true);
       setCart([]); setShippingCost(null);
-    } catch (err) { console.error(err); showToast("Erro ao salvar pedido no banco", "error"); }
-    finally { setIsLoading(false); }
+      
+    } catch (err) { 
+      // FALLBACK: SE O BANCO FALHAR, NÃO TRAVA O USUÁRIO
+      console.error("Erro banco, indo para WhatsApp:", err);
+      msg += `\n\n⚠️ *Nota:* O pedido não pôde ser salvo no histórico do site devido a um erro de conexão, mas segue o resumo para processamento manual.`;
+      
+      const waUrl = `https://wa.me/551732167854?text=${encodeURIComponent(msg)}`;
+      
+      // Abre WhatsApp direto
+      window.open(waUrl, '_blank');
+      showToast("Erro de conexão. Redirecionando para WhatsApp...", "error");
+      setIsPaymentOpen(false);
+    } finally { 
+      setIsLoading(false); 
+    }
+  };
+
+  const handleManualWhatsapp = () => {
+     if (!currentUser) return;
+     const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (shippingCost || 0);
+     const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
+     const msg = `*Olá! Gostaria de falar sobre meu pedido:* 💬\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens no Carrinho:*\n${itemsList}\n\n💰 *Previsão:* R$ ${total.toFixed(2)}`;
+     window.open(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const handleValidateOrder = async (orderId: string) => {
@@ -621,7 +644,10 @@ export default function App() {
                     {shippingAddress && <div className="flex items-center gap-2 text-emerald-500 text-[10px] font-bold uppercase tracking-wider"><MapPin size={10} /><span>{shippingAddress.localidade}/{shippingAddress.uf}</span></div>}
                   </div>
                   <div className="space-y-2"><div className="flex justify-between items-center px-2 border-t border-white/5 pt-2"><span className="text-[10px] font-black uppercase text-white">Total</span><span className="text-xl font-black text-[#E11D48]">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</span></div></div>
-                  <div className="grid grid-cols-1 gap-3"><button onClick={() => { if(shippingCost === null) { showToast("Calcule o frete", "error"); return; } setIsCartOpen(false); setIsPaymentOpen(true); }} className="bg-[#E11D48] text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 tracking-widest hover:bg-[#be123c] transition-colors"><QrCode size={14}/> PAGAR PIX</button></div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <button onClick={() => { if(shippingCost === null) { showToast("Calcule o frete", "error"); return; } setIsCartOpen(false); setIsPaymentOpen(true); }} className="bg-[#E11D48] text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 tracking-widest hover:bg-[#be123c] transition-colors"><QrCode size={14}/> PAGAR PIX</button>
+                    <button onClick={handleManualWhatsapp} className="border border-white/10 text-zinc-400 hover:text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 tracking-widest hover:bg-white/5 transition-colors"> Orçamento / Dúvidas via WhatsApp</button>
+                  </div>
                 </div>
               )}
             </motion.aside>
@@ -640,7 +666,8 @@ export default function App() {
                   <div className="p-6 bg-zinc-900/50 border-t border-white/5 space-y-4">
                      <div className="flex gap-2"><input type="text" readOnly value={getPixCode()} className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 text-[10px] text-zinc-400 font-mono outline-none" /><button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Copiado!", "success"); }} className="bg-zinc-800 hover:bg-zinc-700 text-white p-3 rounded-xl transition-colors"><Copy size={16} /></button></div>
                      <button onClick={handleFinalizeOrder} className="w-full bg-[#E11D48] hover:bg-[#be123c] text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-600/20 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> Já fiz o Pix (Finalizar)</button>
-                     <button onClick={() => setIsPaymentOpen(false)} className="w-full text-zinc-500 hover:text-white py-2 text-[10px] font-bold uppercase tracking-widest transition-colors">Cancelar</button>
+                     <button onClick={handleManualWhatsapp} className="w-full text-zinc-400 hover:text-emerald-400 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"><MessageCircle size={14}/> Problemas? Pagar no WhatsApp</button>
+                     <button onClick={() => setIsPaymentOpen(false)} className="w-full text-zinc-600 hover:text-white py-2 text-[10px] font-bold uppercase tracking-widest transition-colors">Cancelar</button>
                   </div>
                </motion.div>
            </motion.div>
