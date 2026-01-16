@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, Hourglass, Loader2, 
@@ -58,9 +57,12 @@ interface OrderDB {
   unit_name: string;
   network_tag: string;
   items: CartItem[];
-  total_amount: number;
+  total_price: number;
   status: string;
   created_at: string;
+  payment_method?: string;
+  user_email?: string;
+  total_amount?: number;
 }
 
 // --- COMPONENTS ---
@@ -106,7 +108,7 @@ export default function App() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
-  const [orderError, setOrderError] = useState(false); // Novo estado para controlar msg de erro
+  const [orderError, setOrderError] = useState(false);
   const [whatsappLink, setWhatsappLink] = useState('');
   
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
@@ -246,60 +248,50 @@ export default function App() {
     finally { setIsLoading(false); }
   };
 
-  const handleFinalizeOrder = async () => {
-    if (!currentUser) return;
-    setIsLoading(true);
-    setOrderError(false); // Reset error state
-
-    const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (shippingCost || 0);
-    const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
+  // --- NOVA FUNÇÃO DE FINALIZAÇÃO (CORRIGIDA) ---
+  const handleFinalizePix = async () => {
+    if (!currentUser || cart.length === 0) return;
     
-    // Mensagem base (Sucesso)
-    let msg = `*NOVO PEDIDO (Via Site)* 🚀\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens:*\n${itemsList}\n\n💰 *Total:* R$ ${total.toFixed(2)}`;
+    setIsLoading(true);
     
     try {
-      // 1. TENTA INSERIR NO SUPABASE
-      const { data, error } = await supabase.from('orders').insert([{
-        user_id: currentUser.id,
-        unit_name: currentUser.unit_name,
-        network_tag: currentUser.network_tag,
-        items: cart,
-        total_amount: total,
-        status: 'Pendente'
-      }]).select();
-
-      if (error) throw error;
+      const total = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0);
       
-      const orderId = data && data[0] ? data[0].id.slice(0, 8).toUpperCase() : 'APP';
-      msg = `*NOVO PEDIDO #${orderId}* 🚀\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens:*\n${itemsList}\n\n💰 *Total:* R$ ${total.toFixed(2)}\n\n✅ *Comprovante Anexo:* (Envie a foto do PIX)`;
+      // Criar pedido no Supabase
+      const { data, error } = await supabase
+        .from('orders')
+        .insert({
+          user_id: currentUser.id,
+          user_email: currentUser.email,
+          unit_name: currentUser.unit_name,
+          network_tag: currentUser.network_tag, // Mantido para filtragem
+          items: cart,
+          total_price: total,
+          status: 'AGUARDANDO VALIDAÇÃO',
+          payment_method: 'PIX'
+        })
+        .select()
+        .single();
       
-      setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`);
+      if (error) {
+        console.error('Erro ao criar pedido:', error);
+        throw error;
+      }
       
-      // SUCESSO PURO
-      setIsPaymentOpen(false); 
-      setIsCartOpen(false); 
-      setIsOrderSuccessOpen(true);
-      setCart([]); 
-      setShippingCost(null);
-      
-    } catch (err: any) { 
-      // ERRO NO BANCO DE DADOS
-      console.error("Erro banco, ativando modo manual:", err);
-      
-      // Prepara mensagem de erro para o WhatsApp
-      msg += `\n\n⚠️ *Nota:* O pedido não pôde ser salvo no histórico do site devido a um erro de conexão/servidor, mas segue o resumo para processamento manual.`;
-      
-      setWhatsappLink(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`);
-      
-      // NÃO redireciona automaticamente (window.open removido)
-      // Abre a modal de sucesso, mas com indicador de erro visual
-      setOrderError(true);
+      // Limpar carrinho e fechar
+      setCart([]);
+      setIsCartOpen(false);
       setIsPaymentOpen(false);
-      setIsCartOpen(false); 
-      setIsOrderSuccessOpen(true); // Exibe modal para o usuário decidir clicar
-      showToast("Erro ao salvar histórico, finalize via WhatsApp.", "error");
-    } finally { 
-      setIsLoading(false); 
+      
+      // Feedback visual
+      setIsOrderSuccessOpen(true);
+      showToast('Pedido enviado! Aguarde validação do pagamento.', 'success');
+      
+    } catch (error: any) {
+      console.error('Erro completo:', error);
+      showToast('Erro ao finalizar pedido. Tente novamente.', 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -309,14 +301,6 @@ export default function App() {
      const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
      const msg = `*Olá! Gostaria de falar sobre meu pedido:* 💬\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens no Carrinho:*\n${itemsList}\n\n💰 *Previsão:* R$ ${total.toFixed(2)}`;
      window.open(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`, '_blank');
-  };
-
-  const handleValidateOrder = async (orderId: string) => {
-    if (!confirm("Confirmar recebimento do pagamento?")) return;
-    try {
-       await supabase.from('orders').update({ status: 'Pago/Em Produção' }).eq('id', orderId);
-       showToast("Pedido validado!", "success");
-    } catch { showToast("Erro ao validar", "error"); }
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -330,14 +314,193 @@ export default function App() {
     } catch { showToast("Erro ao salvar", "error"); } finally { setIsLoading(false); }
   };
 
+  // --- SUB-COMPONENTES (DEFINIDOS AQUI PARA ACESSO AO CONTEXTO) ---
+  const OrdersManagement = () => {
+    const [ordersList, setOrdersList] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+      fetchOrders();
+    }, []);
+
+    const fetchOrders = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select(`*`)
+          .order('created_at', { ascending: false });
+        
+        if (error) throw error;
+        setOrdersList(data || []);
+      } catch (err) {
+        console.error('Erro ao buscar pedidos:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const handleValidateOrder = async (orderId: string, approve: boolean) => {
+      try {
+        const { error } = await supabase
+          .from('orders')
+          .update({
+            status: approve ? 'PAGO/AGUARDANDO PRODUÇÃO' : 'PAGAMENTO RECUSADO',
+            validated_by: currentUser?.id,
+            validated_at: new Date().toISOString()
+          })
+          .eq('id', orderId);
+        
+        if (error) throw error;
+        
+        showToast(approve ? 'Pedido aprovado!' : 'Pedido recusado', 'success');
+        fetchOrders();
+      } catch (err) {
+        showToast('Erro ao validar pedido', 'error');
+      }
+    };
+
+    if (loading) {
+      return (
+        <div className="text-center py-12 text-zinc-600">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+          <p className="text-xs uppercase font-black">Carregando pedidos...</p>
+        </div>
+      );
+    }
+
+    const pendingOrders = ordersList.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO');
+
+    if (pendingOrders.length === 0) {
+      return (
+        <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center">
+          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
+          <p className="text-zinc-500 uppercase font-black text-xs">Nenhum pedido pendente</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {pendingOrders.map((order) => (
+          <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-black text-white mb-1">{order.unit_name}</h3>
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">
+                  {new Date(order.created_at).toLocaleDateString('pt-BR', {
+                    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                  })}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-zinc-500 uppercase font-bold mb-1">Total</p>
+                <p className="text-xl font-black text-[#E11D48]">
+                  {formatCurrency(order.total_price || order.total_amount || 0)}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-zinc-950/40 rounded-2xl p-4 mb-4">
+              <p className="text-[10px] text-zinc-600 uppercase font-black mb-2">Itens do Pedido</p>
+              <div className="space-y-2">
+                {order.items.map((item: any, idx: number) => (
+                  <div key={idx} className="flex justify-between text-xs">
+                    <span className="text-zinc-400">{item.name} ({item.selectedSize})</span>
+                    <span className="text-white font-bold">{item.quantity}x R$ {item.price.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleValidateOrder(order.id, false)}
+                className="flex-1 bg-rose-600/10 text-rose-500 py-3 rounded-xl font-black uppercase text-[9px] hover:bg-rose-600/20 transition-colors"
+              >
+                Recusar
+              </button>
+              <button
+                onClick={() => handleValidateOrder(order.id, true)}
+                className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black uppercase text-[9px] hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20"
+              >
+                Aprovar Pagamento
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const ClientOrderHistory = ({ userId }: { userId: string }) => {
+    const [historyOrders, setHistoryOrders] = useState<any[]>([]);
+
+    useEffect(() => {
+      const fetchHistory = async () => {
+        const { data } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
+        
+        if (data) setHistoryOrders(data);
+      };
+      fetchHistory();
+    }, [userId]);
+
+    const getStatusColor = (status: string) => {
+      if (status.includes('AGUARDANDO')) return 'text-yellow-500';
+      if (status.includes('PAGO')) return 'text-emerald-500';
+      if (status.includes('RECUSADO')) return 'text-rose-500';
+      return 'text-zinc-500';
+    };
+
+    if (historyOrders.length === 0) {
+      return (
+        <div className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-12 text-center">
+          <Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
+          <p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido realizado</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid gap-4">
+        {historyOrders.map((order) => (
+          <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-xs text-zinc-500 uppercase font-bold mb-1">
+                Pedido #{order.id.slice(0, 8).toUpperCase()}
+              </p>
+              <p className="text-sm font-black text-white mb-2">
+                {order.items.length} {order.items.length === 1 ? 'item' : 'itens'}
+              </p>
+              <p className={`text-[10px] uppercase font-black ${getStatusColor(order.status)}`}>
+                {order.status}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xl font-black text-[#E11D48]">
+                {formatCurrency(order.total_price || order.total_amount || 0)}
+              </p>
+              <p className="text-[9px] text-zinc-600 mt-1">
+                {new Date(order.created_at).toLocaleDateString('pt-BR')}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   // --- COMPUTED ---
-  const totalRevenue = useMemo(() => orders.reduce((acc, order) => acc + order.total_amount, 0), [orders]);
+  const totalRevenue = useMemo(() => orders.reduce((acc, order) => acc + (order.total_price || order.total_amount || 0), 0), [orders]);
   const mostActiveNetwork = useMemo(() => {
     if (orders.length === 0) return '---';
     const salesByNetwork: Record<string, number> = {};
     orders.forEach(order => {
       const tag = order.network_tag ? order.network_tag.trim().toLowerCase() : 'desconhecido';
-      salesByNetwork[tag] = (salesByNetwork[tag] || 0) + order.total_amount;
+      salesByNetwork[tag] = (salesByNetwork[tag] || 0) + (order.total_price || order.total_amount || 0);
     });
     let top = '---'; let max = 0;
     Object.entries(salesByNetwork).forEach(([tag, total]) => { if (total > max) { max = total; top = tag; } });
@@ -483,33 +646,12 @@ export default function App() {
             </div>
           </section>
 
-          {/* HISTÓRICO DE PAGAMENTOS COM VALIDAÇÃO */}
-          <section>
-             <h2 className="text-xl font-black uppercase tracking-tighter mb-6 flex items-center gap-2"><Hourglass className="text-[#E11D48]" /> Gestão de Pedidos</h2>
-             <div className="bg-zinc-900/30 border border-white/5 rounded-[32px] overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead><tr className="border-b border-white/5"><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Unidade</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Total</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Status</th><th className="p-6 text-[9px] font-black uppercase tracking-widest text-zinc-500">Ação</th></tr></thead>
-                    <tbody>
-                      {orders.map((order) => (
-                        <tr key={order.id} className="hover:bg-white/5 transition-colors">
-                          <td className="p-6"><p className="text-sm font-bold text-white">{order.unit_name}</p><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">{order.network_tag.replace('-', ' ')}</p></td>
-                          <td className="p-6"><p className="text-sm font-black text-[#E11D48]">{formatCurrency(order.total_amount)}</p></td>
-                          <td className="p-6"><span className={`border px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${order.status === 'Pago/Em Produção' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>{order.status}</span></td>
-                          <td className="p-6">
-                            {order.status !== 'Pago/Em Produção' && (
-                                <button onClick={() => handleValidateOrder(order.id)} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-colors shadow-lg shadow-emerald-500/20">
-                                    <Check size={14} /> Validar Pagamento
-                                </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {orders.length === 0 && <div className="p-10 text-center text-zinc-600 font-bold uppercase text-xs">Nenhum pedido registrado</div>}
-                </div>
+          {/* NOVA SEÇÃO: PEDIDOS PENDENTES */}
+          <section className="space-y-6">
+             <div className="flex items-center justify-between">
+                <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3"><Package className="text-[#E11D48]" /> Pedidos Pendentes de Validação</h2>
              </div>
+             <OrdersManagement />
           </section>
 
           {/* FORMULÁRIO DE PRODUTO */}
@@ -626,6 +768,13 @@ export default function App() {
              );
           })}
         </div>
+
+        {/* HISTÓRICO DE PEDIDOS DO CLIENTE */}
+        <section className="mt-16">
+          <h2 className="text-2xl font-black uppercase tracking-tighter mb-8">Meus Pedidos</h2>
+          <ClientOrderHistory userId={currentUser.id} />
+        </section>
+
       </main>
 
       <button onClick={() => window.open(`https://wa.me/551732167854`, '_blank')} className="fixed bottom-8 right-8 w-16 h-16 bg-[#25D366] text-white rounded-full shadow-2xl flex items-center justify-center z-[90] hover:scale-110 transition-transform shadow-emerald-500/20"><MessageCircle size={32} /></button>
@@ -675,7 +824,7 @@ export default function App() {
                   <div className="p-8 bg-white flex flex-col items-center justify-center gap-4"><div className="bg-white p-2 rounded-xl border-4 border-zinc-100"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getPixCode())}`} className="w-48 h-48 mix-blend-multiply" /></div><p className="text-zinc-950 font-black text-2xl">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</p></div>
                   <div className="p-6 bg-zinc-900/50 border-t border-white/5 space-y-4">
                      <div className="flex gap-2"><input type="text" readOnly value={getPixCode()} className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 text-[10px] text-zinc-400 font-mono outline-none" /><button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Copiado!", "success"); }} className="bg-zinc-800 hover:bg-zinc-700 text-white p-3 rounded-xl transition-colors"><Copy size={16} /></button></div>
-                     <button onClick={handleFinalizeOrder} className="w-full bg-[#E11D48] hover:bg-[#be123c] text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-600/20 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> Já fiz o Pix (Finalizar)</button>
+                     <button onClick={handleFinalizePix} className="w-full bg-[#E11D48] hover:bg-[#be123c] text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-600/20 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> Já fiz o Pix (Finalizar)</button>
                      <button onClick={handleManualWhatsapp} className="w-full text-zinc-400 hover:text-emerald-400 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"><MessageCircle size={14}/> Problemas? Pagar no WhatsApp</button>
                      <button onClick={() => setIsPaymentOpen(false)} className="w-full text-zinc-600 hover:text-white py-2 text-[10px] font-bold uppercase tracking-widest transition-colors">Cancelar</button>
                   </div>
@@ -703,14 +852,14 @@ export default function App() {
                       : 'Seu pedido foi salvo no sistema como Pendente. O envio será iniciado assim que o gestor confirmar o pagamento.'}
                  </p>
                  
-                 <button onClick={() => { window.open(whatsappLink, '_blank'); setIsOrderSuccessOpen(false); }} className="w-full bg-[#25D366] hover:bg-[#1da851] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-3"><Send size={18} /> ENVIAR COMPROVANTE WHATSAPP</button>
+                 <button onClick={() => { if(whatsappLink) window.open(whatsappLink, '_blank'); setIsOrderSuccessOpen(false); }} className="w-full bg-[#25D366] hover:bg-[#1da851] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-3"><Send size={18} /> {whatsappLink ? 'ENVIAR COMPROVANTE WHATSAPP' : 'FECHAR'}</button>
                  <button onClick={() => setIsOrderSuccessOpen(false)} className="mt-6 text-zinc-600 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors">Fechar</button>
               </motion.div>
            </motion.div>
         )}
       </AnimatePresence>
 
-      {/* HISTORICO */}
+      {/* HISTORICO ANTIGO (MODAL - MANTIDO POR PRECAUÇÃO MAS REDUNDANTE COM A SEÇÃO NOVA) */}
       <AnimatePresence>
         {isHistoryOpen && (
            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
@@ -721,7 +870,7 @@ export default function App() {
                         <div key={order.id} className="bg-zinc-900/40 border border-white/5 p-6 rounded-3xl">
                            <div className="flex justify-between items-start mb-6"><div><p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">ID</p><p className="text-sm font-bold text-white">#{order.id.slice(0, 8).toUpperCase()}</p></div><div className="text-right"><p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">Data</p><p className="text-sm font-bold text-white">{new Date(order.created_at).toLocaleDateString('pt-BR')}</p></div></div>
                            <div className="space-y-3 mb-6">{(order.items as any[]).map((item: any, idx: number) => (<div key={idx} className="flex justify-between items-center text-sm"><span className="font-medium text-zinc-300"><span className="font-bold text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded text-[10px] mr-2">{item.quantity}x</span> {item.name} ({item.selectedSize})</span><span className="text-zinc-400">R$ {(item.price * item.quantity).toFixed(2)}</span></div>))}</div>
-                           <div className="flex items-center justify-between pt-6 border-t border-white/5"><span className={`border px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 ${order.status === 'Pago/Em Produção' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>{order.status}</span><span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_amount)}</span></div>
+                           <div className="flex items-center justify-between pt-6 border-t border-white/5"><span className={`border px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 ${order.status === 'Pago/Em Produção' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>{order.status}</span><span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</span></div>
                         </div>
                      ))}
                   </div>
