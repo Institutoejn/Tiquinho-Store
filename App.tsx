@@ -63,6 +63,8 @@ interface OrderDB {
   payment_method?: string;
   user_email?: string;
   total_amount?: number;
+  validated_at?: string;
+  validated_by?: string;
 }
 
 // --- COMPONENTS ---
@@ -95,6 +97,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
+  const [adminTab, setAdminTab] = useState<'products' | 'pending' | 'history'>('products');
   
   const [formData, setFormData] = useState({ 
     email: '', password: '', unit_name: '', network_tag: '', role: 'user' as 'user' | 'admin', 
@@ -248,7 +251,6 @@ export default function App() {
     finally { setIsLoading(false); }
   };
 
-  // --- NOVA FUNÇÃO DE FINALIZAÇÃO (CORRIGIDA) ---
   const handleFinalizePix = async () => {
     if (!currentUser || cart.length === 0) return;
     
@@ -264,7 +266,7 @@ export default function App() {
           user_id: currentUser.id,
           user_email: currentUser.email,
           unit_name: currentUser.unit_name,
-          // network_tag removido conforme solicitado para correção de erro
+          // network_tag removido para correção
           items: cart,
           total_price: total,
           status: 'AGUARDANDO VALIDAÇÃO',
@@ -428,6 +430,228 @@ export default function App() {
             </div>
           </div>
         ))}
+      </div>
+    );
+  };
+
+  const OrdersHistory = () => {
+    const [ordersHistory, setOrdersHistory] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [filter, setFilter] = useState<'all' | 'approved' | 'rejected'>('all');
+
+    useEffect(() => {
+      fetchAllOrders();
+    }, []);
+
+    const fetchAllOrders = async () => {
+      try {
+        setLoading(true);
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        if (error) throw error;
+        setOrdersHistory(data || []);
+      } catch (err) {
+        console.error('Erro ao buscar histórico:', err);
+        showToast('Erro ao carregar histórico', 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const filteredOrders = ordersHistory.filter(order => {
+      if (filter === 'all') return true;
+      if (filter === 'approved') return order.status === 'PAGO/AGUARDANDO PRODUÇÃO';
+      if (filter === 'rejected') return order.status === 'PAGAMENTO RECUSADO';
+      return true;
+    });
+
+    const stats = {
+      total: ordersHistory.length,
+      pending: ordersHistory.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length,
+      approved: ordersHistory.filter(o => o.status === 'PAGO/AGUARDANDO PRODUÇÃO').length,
+      rejected: ordersHistory.filter(o => o.status === 'PAGAMENTO RECUSADO').length,
+      totalRevenue: ordersHistory
+        .filter(o => o.status === 'PAGO/AGUARDANDO PRODUÇÃO')
+        .reduce((acc, o) => acc + (o.total_price || o.total_amount || 0), 0)
+    };
+
+    const getStatusBadge = (status: string) => {
+      if (status === 'AGUARDANDO VALIDAÇÃO') {
+        return (
+          <span className="px-3 py-1 bg-yellow-500/10 text-yellow-500 rounded-full text-[9px] font-black uppercase">
+            Pendente
+          </span>
+        );
+      }
+      if (status === 'PAGO/AGUARDANDO PRODUÇÃO') {
+        return (
+          <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[9px] font-black uppercase">
+            Aprovado
+          </span>
+        );
+      }
+      if (status === 'PAGAMENTO RECUSADO') {
+        return (
+          <span className="px-3 py-1 bg-rose-500/10 text-rose-500 rounded-full text-[9px] font-black uppercase">
+            Recusado
+          </span>
+        );
+      }
+      return (
+        <span className="px-3 py-1 bg-zinc-500/10 text-zinc-500 rounded-full text-[9px] font-black uppercase">
+            {status}
+        </span>
+      );
+    };
+
+    if (loading) {
+      return (
+        <div className="text-center py-20 text-zinc-600">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" />
+          <p className="text-xs uppercase font-black tracking-widest">Carregando histórico...</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* ESTATÍSTICAS */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="bg-zinc-900/40 border border-white/5 rounded-[32px] p-6">
+            <p className="text-[10px] text-zinc-500 uppercase font-black mb-2">Total Pedidos</p>
+            <p className="text-3xl font-black text-white">{stats.total}</p>
+          </div>
+          
+          <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-[32px] p-6">
+            <p className="text-[10px] text-yellow-600 uppercase font-black mb-2">Pendentes</p>
+            <p className="text-3xl font-black text-yellow-500">{stats.pending}</p>
+          </div>
+          
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-[32px] p-6">
+            <p className="text-[10px] text-emerald-600 uppercase font-black mb-2">Aprovados</p>
+            <p className="text-3xl font-black text-emerald-500">{stats.approved}</p>
+          </div>
+          
+          <div className="bg-rose-500/5 border border-rose-500/20 rounded-[32px] p-6">
+            <p className="text-[10px] text-rose-600 uppercase font-black mb-2">Recusados</p>
+            <p className="text-3xl font-black text-rose-500">{stats.rejected}</p>
+          </div>
+          
+          <div className="bg-[#E11D48]/5 border border-[#E11D48]/20 rounded-[32px] p-6">
+            <p className="text-[10px] text-rose-600 uppercase font-black mb-2">Faturamento</p>
+            <p className="text-2xl font-black text-[#E11D48]">{formatCurrency(stats.totalRevenue)}</p>
+          </div>
+        </div>
+
+        {/* FILTROS */}
+        <div className="flex gap-3 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 w-fit">
+          <button
+            onClick={() => setFilter('all')}
+            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${
+              filter === 'all' ? 'bg-[#E11D48] text-white' : 'text-zinc-500 hover:text-white'
+            }`}
+          >
+            Todos
+          </button>
+          <button
+            onClick={() => setFilter('approved')}
+            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${
+              filter === 'approved' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-white'
+            }`}
+          >
+            Aprovados
+          </button>
+          <button
+            onClick={() => setFilter('rejected')}
+            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${
+              filter === 'rejected' ? 'bg-rose-600 text-white' : 'text-zinc-500 hover:text-white'
+            }`}
+          >
+            Recusados
+          </button>
+        </div>
+
+        {/* LISTA DE PEDIDOS */}
+        {filteredOrders.length === 0 ? (
+          <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center">
+            <Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
+            <p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido encontrado</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filteredOrders.map((order) => (
+              <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 hover:border-white/10 transition-colors">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="text-base font-black text-white">{order.unit_name}</h3>
+                      {getStatusBadge(order.status)}
+                    </div>
+                    <p className="text-xs text-zinc-500 font-medium">{order.user_email}</p>
+                    <p className="text-[10px] text-zinc-600 uppercase font-bold mt-1">
+                      Pedido #{order.id.slice(0, 8).toUpperCase()} • {' '}
+                      {new Date(order.created_at).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-black text-[#E11D48]">
+                      {formatCurrency(order.total_price || order.total_amount || 0)}
+                    </p>
+                    <p className="text-[9px] text-zinc-600 uppercase font-bold mt-1">
+                      {order.payment_method || 'PIX'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* ITENS DO PEDIDO */}
+                <details className="group">
+                  <summary className="cursor-pointer text-[10px] text-zinc-500 uppercase font-black hover:text-white transition-colors list-none flex items-center gap-2">
+                    <svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    Ver {order.items.length} {order.items.length === 1 ? 'item' : 'itens'}
+                  </summary>
+                  <div className="mt-4 bg-zinc-950/40 rounded-2xl p-4 space-y-2">
+                    {order.items.map((item: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl bg-zinc-900 overflow-hidden">
+                            <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
+                          </div>
+                          <span className="text-zinc-300 font-medium">{item.name} ({item.selectedSize})</span>
+                        </div>
+                        <span className="text-white font-bold">
+                          {item.quantity}x R$ {item.price.toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+
+                {/* INFORMAÇÕES DE VALIDAÇÃO */}
+                {order.validated_at && (
+                  <div className="mt-4 pt-4 border-t border-white/5 text-[9px] text-zinc-600">
+                    Validado em {new Date(order.validated_at).toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   };
@@ -620,92 +844,159 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#09090b] text-zinc-100 pb-20">
         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
-        <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between border-b border-white/5">
-          <div className="flex items-center gap-3"><Logo /><div className="flex flex-col"><h2 className="text-sm font-black uppercase tracking-tighter text-white">Central de Gestão</h2><span className="text-[9px] font-bold text-[#E11D48] tracking-widest uppercase">• Painel Administrativo</span></div></div>
-          <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 bg-zinc-900/50 rounded-2xl text-zinc-400 hover:text-[#E11D48] border border-white/5"><LogOut size={18} /></button>
+        
+        <header className="sticky top-0 z-50 glass px-6 py-4 border-b border-white/5">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <Logo />
+                <h2 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">
+                  Painel Jéssica
+                </h2>
+              </div>
+              <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 bg-zinc-800 rounded-2xl text-zinc-400 hover:text-[#E11D48]">
+                <LogOut size={20} />
+              </button>
+            </div>
+            
+            {/* NAVEGAÇÃO POR ABAS */}
+            <div className="flex gap-2 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 relative overflow-hidden">
+              <motion.div
+                className="absolute inset-y-1.5 bg-[#E11D48] rounded-xl"
+                animate={{
+                  x: adminTab === 'products' ? '4px' : adminTab === 'pending' ? 'calc(33.333% + 4px)' : 'calc(66.666% + 4px)',
+                  width: 'calc(33.333% - 8px)'
+                }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+              
+              <button
+                onClick={() => setAdminTab('products')}
+                className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${
+                  adminTab === 'products' ? 'text-white' : 'text-zinc-500'
+                }`}
+              >
+                <PlusCircle size={14} className="inline mr-2" />
+                Produtos
+              </button>
+              
+              <button
+                onClick={() => setAdminTab('pending')}
+                className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${
+                  adminTab === 'pending' ? 'text-white' : 'text-zinc-500'
+                }`}
+              >
+                <Hourglass size={14} className="inline mr-2" />
+                Pendentes
+              </button>
+              
+              <button
+                onClick={() => setAdminTab('history')}
+                className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${
+                  adminTab === 'history' ? 'text-white' : 'text-zinc-500'
+                }`}
+              >
+                <Package size={14} className="inline mr-2" />
+                Histórico
+              </button>
+            </div>
+          </div>
         </header>
 
         <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
           
-          {/* DASHBOARD PERFORMANCE */}
-          <section>
-            <h3 className="text-xl font-black uppercase tracking-tighter mb-6 flex items-center gap-2"><TrendingUp className="text-[#E11D48]" /> Performance Global</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
-                <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center mb-2"><LayoutGrid className="text-blue-500" size={20} /></div>
-                <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Modelos Ativos</span><h4 className="text-3xl font-black text-white">{products.length}</h4></div>
-              </div>
-              <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
-                <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-2"><DollarSign className="text-emerald-500" size={20} /></div>
-                <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Receita Confirmada</span><h4 className="text-3xl font-black text-white">{formatCurrency(totalRevenue)}</h4></div>
-              </div>
-              <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
-                <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center mb-2"><TrendingUp className="text-rose-500" size={20} /></div>
-                <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">{mostActiveNetwork}</h4></div>
-              </div>
-            </div>
-          </section>
-
-          {/* NOVA SEÇÃO: PEDIDOS PENDENTES */}
-          <section className="space-y-6">
-             <div className="flex items-center justify-between">
-                <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3"><Package className="text-[#E11D48]" /> Pedidos Pendentes de Validação</h2>
-             </div>
-             <OrdersManagement />
-          </section>
-
-          {/* FORMULÁRIO DE PRODUTO */}
-          <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
-            <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Gerenciar Catálogo</h2>
-            <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-              <div className="lg:col-span-4 flex flex-col gap-2">
-                 <div onClick={() => fileInputRef.current?.click()} className="aspect-[3/4] bg-zinc-950 border border-white/5 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 overflow-hidden relative group transition-all">
-                  {newProduct.image_url ? ( <img src={newProduct.image_url} className="absolute inset-0 w-full h-full object-cover" /> ) : ( <div className="text-zinc-700 text-center group-hover:text-zinc-500 transition-colors"><ImageIcon className="mx-auto mb-3 w-10 h-10 stroke-1" /><p className="text-[9px] font-black uppercase tracking-widest">Upload Imagem</p></div> )}
-                  <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setNewProduct({...newProduct, image_url: reader.result as string}); reader.readAsDataURL(file); } }} className="hidden" accept="image/*" />
-                </div>
-              </div>
-              <div className="lg:col-span-8 space-y-6">
-                <input type="text" placeholder="Nome do Produto" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-                <textarea rows={2} placeholder="Descrição" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                <div className="grid grid-cols-2 gap-4">
-                    <input type="number" step="0.01" placeholder="Preço (R$)" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-                    <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm"><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option><option value="Unissex">Unissex</option><option value="Inverno">Inverno</option></select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <input type="number" placeholder="Mínimo" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                    <input type="number" placeholder="Dias Produção" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                </div>
-                {/* Tamanhos */}
-                <div className="flex gap-2">
-                     {['P', 'M', 'G', 'GG', 'XG', 'Único'].map(size => (
-                       <button type="button" key={size} onClick={() => { const sizes = newProduct.available_sizes.includes(size) ? newProduct.available_sizes.filter(s => s !== size) : [...newProduct.available_sizes, size]; setNewProduct({...newProduct, available_sizes: sizes}); }} className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400'}`}>{size}</button>
-                     ))}
-                </div>
-                <div className="relative">
-                    <input type="text" list="admin-network-list" placeholder="Rede Franqueada" value={newProduct.network_tag} onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm font-bold" required />
-                    <datalist id="admin-network-list">{availableNetworks.map(net => <option key={net} value={net} />)}</datalist>
-                </div>
-                <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar' : 'Publicar'}</button>
-              </div>
-            </form>
-          </section>
-
-          {/* LISTA DE PRODUTOS */}
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {products.map(p => (
-                <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 flex items-center gap-4 group hover:border-[#E11D48]/30 transition-all">
-                  <img src={p.image_url} className="w-16 h-16 rounded-xl object-cover bg-zinc-950" />
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-[10px] font-bold text-white truncate uppercase mb-1">{p.name}</h4>
-                    <p className="text-[9px] font-bold text-zinc-500 uppercase">{p.network_tag}</p>
-                    <div className="flex gap-2 mt-2">
-                      <button onClick={() => { setEditingId(p.id); setNewProduct({ ...p, price: p.price.toString(), min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [], description: p.description || '' }); window.scrollTo({ top: 800, behavior: 'smooth' }); }} className="text-xs text-zinc-400 hover:text-white">Editar</button>
-                      <button onClick={() => { if(confirm("Excluir?")) { supabase.from('products').delete().eq('id', p.id).then(() => setProducts(products.filter(pr => pr.id !== p.id))); } }} className="text-xs text-rose-500 hover:text-rose-400">Excluir</button>
-                    </div>
+          {/* ABA: PRODUTOS */}
+          {adminTab === 'products' && (
+            <>
+              {/* DASHBOARD PERFORMANCE */}
+              <section>
+                <h3 className="text-xl font-black uppercase tracking-tighter mb-6 flex items-center gap-2"><TrendingUp className="text-[#E11D48]" /> Performance Global</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
+                    <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center mb-2"><LayoutGrid className="text-blue-500" size={20} /></div>
+                    <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Modelos Ativos</span><h4 className="text-3xl font-black text-white">{products.length}</h4></div>
+                  </div>
+                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
+                    <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-2"><DollarSign className="text-emerald-500" size={20} /></div>
+                    <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Receita Confirmada</span><h4 className="text-3xl font-black text-white">{formatCurrency(totalRevenue)}</h4></div>
+                  </div>
+                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
+                    <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center mb-2"><TrendingUp className="text-rose-500" size={20} /></div>
+                    <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">{mostActiveNetwork}</h4></div>
                   </div>
                 </div>
-              ))}
-          </section>
+              </section>
+
+              {/* FORMULÁRIO DE PRODUTO */}
+              <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
+                <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Gerenciar Catálogo</h2>
+                <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+                  <div className="lg:col-span-4 flex flex-col gap-2">
+                     <div onClick={() => fileInputRef.current?.click()} className="aspect-[3/4] bg-zinc-950 border border-white/5 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 overflow-hidden relative group transition-all">
+                      {newProduct.image_url ? ( <img src={newProduct.image_url} className="absolute inset-0 w-full h-full object-cover" /> ) : ( <div className="text-zinc-700 text-center group-hover:text-zinc-500 transition-colors"><ImageIcon className="mx-auto mb-3 w-10 h-10 stroke-1" /><p className="text-[9px] font-black uppercase tracking-widest">Upload Imagem</p></div> )}
+                      <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setNewProduct({...newProduct, image_url: reader.result as string}); reader.readAsDataURL(file); } }} className="hidden" accept="image/*" />
+                    </div>
+                  </div>
+                  <div className="lg:col-span-8 space-y-6">
+                    <input type="text" placeholder="Nome do Produto" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+                    <textarea rows={2} placeholder="Descrição" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                    <div className="grid grid-cols-2 gap-4">
+                        <input type="number" step="0.01" placeholder="Preço (R$)" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+                        <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm"><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option><option value="Unissex">Unissex</option><option value="Inverno">Inverno</option></select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <input type="number" placeholder="Mínimo" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                        <input type="number" placeholder="Dias Produção" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                    </div>
+                    {/* Tamanhos */}
+                    <div className="flex gap-2">
+                         {['P', 'M', 'G', 'GG', 'XG', 'Único'].map(size => (
+                           <button type="button" key={size} onClick={() => { const sizes = newProduct.available_sizes.includes(size) ? newProduct.available_sizes.filter(s => s !== size) : [...newProduct.available_sizes, size]; setNewProduct({...newProduct, available_sizes: sizes}); }} className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400'}`}>{size}</button>
+                         ))}
+                    </div>
+                    <div className="relative">
+                        <input type="text" list="admin-network-list" placeholder="Rede Franqueada" value={newProduct.network_tag} onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm font-bold" required />
+                        <datalist id="admin-network-list">{availableNetworks.map(net => <option key={net} value={net} />)}</datalist>
+                    </div>
+                    <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar' : 'Publicar'}</button>
+                  </div>
+                </form>
+              </section>
+
+              {/* LISTA DE PRODUTOS */}
+              <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {products.map(p => (
+                    <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 flex items-center gap-4 group hover:border-[#E11D48]/30 transition-all">
+                      <img src={p.image_url} className="w-16 h-16 rounded-xl object-cover bg-zinc-950" />
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-[10px] font-bold text-white truncate uppercase mb-1">{p.name}</h4>
+                        <p className="text-[9px] font-bold text-zinc-500 uppercase">{p.network_tag}</p>
+                        <div className="flex gap-2 mt-2">
+                          <button onClick={() => { setEditingId(p.id); setNewProduct({ ...p, price: p.price.toString(), min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [], description: p.description || '' }); window.scrollTo({ top: 800, behavior: 'smooth' }); }} className="text-xs text-zinc-400 hover:text-white">Editar</button>
+                          <button onClick={() => { if(confirm("Excluir?")) { supabase.from('products').delete().eq('id', p.id).then(() => setProducts(products.filter(pr => pr.id !== p.id))); } }} className="text-xs text-rose-500 hover:text-rose-400">Excluir</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+              </section>
+            </>
+          )}
+
+          {/* ABA: PEDIDOS PENDENTES */}
+          {adminTab === 'pending' && (
+            <section className="space-y-6">
+               <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3"><Package className="text-[#E11D48]" /> Pedidos Pendentes de Validação</h2>
+               </div>
+               <OrdersManagement />
+            </section>
+          )}
+
+          {/* ABA: HISTÓRICO COMPLETO */}
+          {adminTab === 'history' && (
+            <OrdersHistory />
+          )}
+
         </main>
       </div>
     );
