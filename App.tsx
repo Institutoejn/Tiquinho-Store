@@ -264,7 +264,7 @@ export default function App() {
           user_id: currentUser.id,
           user_email: currentUser.email,
           unit_name: currentUser.unit_name,
-          network_tag: currentUser.network_tag, // Mantido para filtragem
+          // network_tag removido conforme solicitado para correção de erro
           items: cart,
           total_price: total,
           status: 'AGUARDANDO VALIDAÇÃO',
