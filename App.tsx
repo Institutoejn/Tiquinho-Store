@@ -116,6 +116,8 @@ export default function App() {
   
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
   const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
+  const [clientProfiles, setClientProfiles] = useState<Array<{network_tag: string, unit_name: string, email: string}>>([]);
+  
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -132,8 +134,8 @@ export default function App() {
   // Admin Form
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newProduct, setNewProduct] = useState({ 
-    name: '', price: '', image_url: '', network_tag: '', category: 'Masculino', description: '', 
-    min_order: '10', production_days: '15', available_sizes: [] as string[]
+    name: '', price: '', image_url: '', network_tags: [] as string[], 
+    category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] as string[]
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -174,10 +176,27 @@ export default function App() {
       if (orderData) setOrders(orderData);
 
       if (currentUser.role === 'admin') {
-          const nets = new Set<string>();
-          const { data: profs } = await supabase.from('profiles').select('network_tag').neq('role', 'admin');
-          profs?.forEach(p => p.network_tag && nets.add(p.network_tag));
-          setAvailableNetworks(Array.from(nets).sort());
+        try {
+            const { data: profs } = await supabase
+                .from('profiles')
+                .select('network_tag, unit_name, email')
+                .neq('role', 'admin')
+                .order('network_tag');
+            
+            if (profs) {
+                const groupedMap = new Map<string, {network_tag: string, unit_name: string, email: string}>();
+                profs.forEach(p => {
+                    if (p.network_tag && !groupedMap.has(p.network_tag)) {
+                        groupedMap.set(p.network_tag, p);
+                    }
+                });
+                const grouped = Array.from(groupedMap.values());
+                setClientProfiles(grouped);
+                setAvailableNetworks(grouped.map(p => p.network_tag));
+            }
+        } catch (error) {
+            console.error("Erro ao buscar perfis:", error);
+        }
       }
     } catch (err) { console.error(err); }
   };
@@ -253,20 +272,15 @@ export default function App() {
 
   const handleFinalizePix = async () => {
     if (!currentUser || cart.length === 0) return;
-    
     setIsLoading(true);
-    
     try {
       const total = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0);
-      
-      // Criar pedido no Supabase
       const { data, error } = await supabase
         .from('orders')
         .insert({
           user_id: currentUser.id,
           user_email: currentUser.email,
           unit_name: currentUser.unit_name,
-          // network_tag removido para correção
           items: cart,
           total_price: total,
           status: 'AGUARDANDO VALIDAÇÃO',
@@ -275,26 +289,12 @@ export default function App() {
         .select()
         .single();
       
-      if (error) {
-        console.error('Erro ao criar pedido:', error);
-        throw error;
-      }
-      
-      // Limpar carrinho e fechar
-      setCart([]);
-      setIsCartOpen(false);
-      setIsPaymentOpen(false);
-      
-      // Feedback visual
-      setIsOrderSuccessOpen(true);
-      showToast('Pedido enviado! Aguarde validação do pagamento.', 'success');
-      
+      if (error) throw error;
+      setCart([]); setIsCartOpen(false); setIsPaymentOpen(false);
+      setIsOrderSuccessOpen(true); showToast('Pedido enviado! Aguarde validação do pagamento.', 'success');
     } catch (error: any) {
-      console.error('Erro completo:', error);
-      showToast('Erro ao finalizar pedido. Tente novamente.', 'error');
-    } finally {
-      setIsLoading(false);
-    }
+      console.error('Erro completo:', error); showToast('Erro ao finalizar pedido. Tente novamente.', 'error');
+    } finally { setIsLoading(false); }
   };
 
   const handleManualWhatsapp = () => {
@@ -308,78 +308,94 @@ export default function App() {
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault(); setIsLoading(true);
     const p = { ...newProduct, price: parseFloat(newProduct.price), min_order: parseInt(newProduct.min_order), production_days: parseInt(newProduct.production_days) };
+    
+    if (p.network_tags.length === 0) {
+        showToast("Selecione pelo menos uma rede ou 'Todos os Clientes'", "error");
+        setIsLoading(false);
+        return;
+    }
+
+    let targetTags = p.network_tags;
+    
+    if (targetTags.includes('*')) {
+        // Se selecionar "Todos", tentamos replicar para todos os perfis cadastrados
+        // E removemos o '*', pois o banco precisa de tags especificas para o filtro funcionar
+        const allProfileTags = clientProfiles.map(cp => cp.network_tag);
+        
+        // Se não houver perfis (primeiro uso), não podemos replicar.
+        // Nesse caso, se o usuário selecionou 'Todos', e não há clientes, isso é um erro lógico.
+        // A menos que queiramos permitir salvar com '*' e mudar a lógica de filtro.
+        // Como a regra é "NÃO alterar o filtro", devemos garantir que existam tags.
+        
+        if (allProfileTags.length === 0) {
+             showToast("Não há clientes cadastrados para aplicar 'Todos'. Adicione redes manualmente.", "error");
+             setIsLoading(false);
+             return;
+        }
+        targetTags = allProfileTags;
+    }
+    
+    // Remover duplicatas e garantir que não tenha '*'
+    targetTags = [...new Set(targetTags)].filter(t => t !== '*');
+
+    const productsToSave = targetTags.map(tag => ({
+        name: p.name, description: p.description, price: p.price, image_url: p.image_url,
+        network_tag: tag, category: p.category, min_order: p.min_order,
+        production_days: p.production_days, available_sizes: p.available_sizes
+    }));
+
     try {
-      if (editingId) await supabase.from('products').update(p).eq('id', editingId);
-      else await supabase.from('products').insert([p]);
-      showToast("Salvo com sucesso!"); setEditingId(null);
-      setNewProduct({ name: '', price: '', image_url: '', network_tag: '', category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
-    } catch { showToast("Erro ao salvar", "error"); } finally { setIsLoading(false); }
+        if (editingId) {
+            await supabase.from('products').delete().eq('id', editingId);
+            await supabase.from('products').insert(productsToSave);
+        } else {
+            await supabase.from('products').insert(productsToSave);
+        }
+        showToast(`Produto ${editingId ? 'atualizado' : 'publicado'}!`);
+        setEditingId(null);
+        setNewProduct({ name: '', price: '', image_url: '', network_tags: [], category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
+        await fetchInitialData();
+    } catch (err) { showToast("Erro ao salvar", "error"); } finally { setIsLoading(false); }
   };
 
-  // --- SUB-COMPONENTES (DEFINIDOS AQUI PARA ACESSO AO CONTEXTO) ---
+  // --- SUB-COMPONENTES ---
   const OrdersManagement = () => {
     const [ordersList, setOrdersList] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-      fetchOrders();
-    }, []);
+    useEffect(() => { fetchOrders(); }, []);
 
     const fetchOrders = async () => {
       try {
-        const { data, error } = await supabase
-          .from('orders')
-          .select(`*`)
-          .order('created_at', { ascending: false });
-        
+        const { data, error } = await supabase.from('orders').select(`*`).order('created_at', { ascending: false });
         if (error) throw error;
         setOrdersList(data || []);
-      } catch (err) {
-        console.error('Erro ao buscar pedidos:', err);
-      } finally {
-        setLoading(false);
-      }
+      } catch (err) { console.error('Erro ao buscar pedidos:', err); } finally { setLoading(false); }
     };
 
     const handleValidateOrder = async (orderId: string, approve: boolean) => {
       try {
-        const { error } = await supabase
-          .from('orders')
-          .update({
+        const { error } = await supabase.from('orders').update({
             status: approve ? 'PAGO/AGUARDANDO PRODUÇÃO' : 'PAGAMENTO RECUSADO',
             validated_by: currentUser?.id,
             validated_at: new Date().toISOString()
-          })
-          .eq('id', orderId);
-        
+          }).eq('id', orderId);
         if (error) throw error;
-        
         showToast(approve ? 'Pedido aprovado!' : 'Pedido recusado', 'success');
         fetchOrders();
-      } catch (err) {
-        showToast('Erro ao validar pedido', 'error');
-      }
+      } catch (err) { showToast('Erro ao validar pedido', 'error'); }
     };
 
-    if (loading) {
-      return (
-        <div className="text-center py-12 text-zinc-600">
-          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
-          <p className="text-xs uppercase font-black">Carregando pedidos...</p>
-        </div>
-      );
-    }
+    if (loading) return <div className="text-center py-12 text-zinc-600"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" /><p className="text-xs uppercase font-black">Carregando pedidos...</p></div>;
 
     const pendingOrders = ordersList.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO');
 
-    if (pendingOrders.length === 0) {
-      return (
+    if (pendingOrders.length === 0) return (
         <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center">
           <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
           <p className="text-zinc-500 uppercase font-black text-xs">Nenhum pedido pendente</p>
         </div>
       );
-    }
 
     return (
       <div className="space-y-4">
@@ -388,45 +404,17 @@ export default function App() {
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-sm font-black text-white mb-1">{order.unit_name}</h3>
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">
-                  {new Date(order.created_at).toLocaleDateString('pt-BR', {
-                    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                  })}
-                </p>
+                <p className="text-[10px] text-zinc-500 uppercase font-bold">{new Date(order.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-zinc-500 uppercase font-bold mb-1">Total</p>
-                <p className="text-xl font-black text-[#E11D48]">
-                  {formatCurrency(order.total_price || order.total_amount || 0)}
-                </p>
-              </div>
+              <div className="text-right"><p className="text-xs text-zinc-500 uppercase font-bold mb-1">Total</p><p className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</p></div>
             </div>
-
             <div className="bg-zinc-950/40 rounded-2xl p-4 mb-4">
               <p className="text-[10px] text-zinc-600 uppercase font-black mb-2">Itens do Pedido</p>
-              <div className="space-y-2">
-                {order.items.map((item: any, idx: number) => (
-                  <div key={idx} className="flex justify-between text-xs">
-                    <span className="text-zinc-400">{item.name} ({item.selectedSize})</span>
-                    <span className="text-white font-bold">{item.quantity}x R$ {item.price.toFixed(2)}</span>
-                  </div>
-                ))}
-              </div>
+              <div className="space-y-2">{order.items.map((item: any, idx: number) => (<div key={idx} className="flex justify-between text-xs"><span className="text-zinc-400">{item.name} ({item.selectedSize})</span><span className="text-white font-bold">{item.quantity}x R$ {item.price.toFixed(2)}</span></div>))}</div>
             </div>
-
             <div className="flex gap-3">
-              <button
-                onClick={() => handleValidateOrder(order.id, false)}
-                className="flex-1 bg-rose-600/10 text-rose-500 py-3 rounded-xl font-black uppercase text-[9px] hover:bg-rose-600/20 transition-colors"
-              >
-                Recusar
-              </button>
-              <button
-                onClick={() => handleValidateOrder(order.id, true)}
-                className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black uppercase text-[9px] hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20"
-              >
-                Aprovar Pagamento
-              </button>
+              <button onClick={() => handleValidateOrder(order.id, false)} className="flex-1 bg-rose-600/10 text-rose-500 py-3 rounded-xl font-black uppercase text-[9px] hover:bg-rose-600/20 transition-colors">Recusar</button>
+              <button onClick={() => handleValidateOrder(order.id, true)} className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black uppercase text-[9px] hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20">Aprovar Pagamento</button>
             </div>
           </div>
         ))}
@@ -439,26 +427,15 @@ export default function App() {
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<'all' | 'approved' | 'rejected'>('all');
 
-    useEffect(() => {
-      fetchAllOrders();
-    }, []);
+    useEffect(() => { fetchAllOrders(); }, []);
 
     const fetchAllOrders = async () => {
       try {
         setLoading(true);
-        const { data, error } = await supabase
-          .from('orders')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
+        const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
         if (error) throw error;
         setOrdersHistory(data || []);
-      } catch (err) {
-        console.error('Erro ao buscar histórico:', err);
-        showToast('Erro ao carregar histórico', 'error');
-      } finally {
-        setLoading(false);
-      }
+      } catch (err) { console.error('Erro ao buscar histórico:', err); showToast('Erro ao carregar histórico', 'error'); } finally { setLoading(false); }
     };
 
     const filteredOrders = ordersHistory.filter(order => {
@@ -473,181 +450,49 @@ export default function App() {
       pending: ordersHistory.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length,
       approved: ordersHistory.filter(o => o.status === 'PAGO/AGUARDANDO PRODUÇÃO').length,
       rejected: ordersHistory.filter(o => o.status === 'PAGAMENTO RECUSADO').length,
-      totalRevenue: ordersHistory
-        .filter(o => o.status === 'PAGO/AGUARDANDO PRODUÇÃO')
-        .reduce((acc, o) => acc + (o.total_price || o.total_amount || 0), 0)
+      totalRevenue: ordersHistory.filter(o => o.status === 'PAGO/AGUARDANDO PRODUÇÃO').reduce((acc, o) => acc + (o.total_price || o.total_amount || 0), 0)
     };
 
     const getStatusBadge = (status: string) => {
-      if (status === 'AGUARDANDO VALIDAÇÃO') {
-        return (
-          <span className="px-3 py-1 bg-yellow-500/10 text-yellow-500 rounded-full text-[9px] font-black uppercase">
-            Pendente
-          </span>
-        );
-      }
-      if (status === 'PAGO/AGUARDANDO PRODUÇÃO') {
-        return (
-          <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[9px] font-black uppercase">
-            Aprovado
-          </span>
-        );
-      }
-      if (status === 'PAGAMENTO RECUSADO') {
-        return (
-          <span className="px-3 py-1 bg-rose-500/10 text-rose-500 rounded-full text-[9px] font-black uppercase">
-            Recusado
-          </span>
-        );
-      }
-      return (
-        <span className="px-3 py-1 bg-zinc-500/10 text-zinc-500 rounded-full text-[9px] font-black uppercase">
-            {status}
-        </span>
-      );
+      if (status === 'AGUARDANDO VALIDAÇÃO') return <span className="px-3 py-1 bg-yellow-500/10 text-yellow-500 rounded-full text-[9px] font-black uppercase">Pendente</span>;
+      if (status === 'PAGO/AGUARDANDO PRODUÇÃO') return <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[9px] font-black uppercase">Aprovado</span>;
+      if (status === 'PAGAMENTO RECUSADO') return <span className="px-3 py-1 bg-rose-500/10 text-rose-500 rounded-full text-[9px] font-black uppercase">Recusado</span>;
+      return <span className="px-3 py-1 bg-zinc-500/10 text-zinc-500 rounded-full text-[9px] font-black uppercase">{status}</span>;
     };
 
-    if (loading) {
-      return (
-        <div className="text-center py-20 text-zinc-600">
-          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" />
-          <p className="text-xs uppercase font-black tracking-widest">Carregando histórico...</p>
-        </div>
-      );
-    }
+    if (loading) return <div className="text-center py-20 text-zinc-600"><Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" /><p className="text-xs uppercase font-black tracking-widest">Carregando histórico...</p></div>;
 
     return (
       <div className="space-y-6">
-        {/* ESTATÍSTICAS */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="bg-zinc-900/40 border border-white/5 rounded-[32px] p-6">
-            <p className="text-[10px] text-zinc-500 uppercase font-black mb-2">Total Pedidos</p>
-            <p className="text-3xl font-black text-white">{stats.total}</p>
-          </div>
-          
-          <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-[32px] p-6">
-            <p className="text-[10px] text-yellow-600 uppercase font-black mb-2">Pendentes</p>
-            <p className="text-3xl font-black text-yellow-500">{stats.pending}</p>
-          </div>
-          
-          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-[32px] p-6">
-            <p className="text-[10px] text-emerald-600 uppercase font-black mb-2">Aprovados</p>
-            <p className="text-3xl font-black text-emerald-500">{stats.approved}</p>
-          </div>
-          
-          <div className="bg-rose-500/5 border border-rose-500/20 rounded-[32px] p-6">
-            <p className="text-[10px] text-rose-600 uppercase font-black mb-2">Recusados</p>
-            <p className="text-3xl font-black text-rose-500">{stats.rejected}</p>
-          </div>
-          
-          <div className="bg-[#E11D48]/5 border border-[#E11D48]/20 rounded-[32px] p-6">
-            <p className="text-[10px] text-rose-600 uppercase font-black mb-2">Faturamento</p>
-            <p className="text-2xl font-black text-[#E11D48]">{formatCurrency(stats.totalRevenue)}</p>
-          </div>
+          <div className="bg-zinc-900/40 border border-white/5 rounded-[32px] p-6"><p className="text-[10px] text-zinc-500 uppercase font-black mb-2">Total Pedidos</p><p className="text-3xl font-black text-white">{stats.total}</p></div>
+          <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-[32px] p-6"><p className="text-[10px] text-yellow-600 uppercase font-black mb-2">Pendentes</p><p className="text-3xl font-black text-yellow-500">{stats.pending}</p></div>
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-[32px] p-6"><p className="text-[10px] text-emerald-600 uppercase font-black mb-2">Aprovados</p><p className="text-3xl font-black text-emerald-500">{stats.approved}</p></div>
+          <div className="bg-rose-500/5 border border-rose-500/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Recusados</p><p className="text-3xl font-black text-rose-500">{stats.rejected}</p></div>
+          <div className="bg-[#E11D48]/5 border border-[#E11D48]/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Faturamento</p><p className="text-2xl font-black text-[#E11D48]">{formatCurrency(stats.totalRevenue)}</p></div>
         </div>
-
-        {/* FILTROS */}
         <div className="flex gap-3 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 w-fit">
-          <button
-            onClick={() => setFilter('all')}
-            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${
-              filter === 'all' ? 'bg-[#E11D48] text-white' : 'text-zinc-500 hover:text-white'
-            }`}
-          >
-            Todos
-          </button>
-          <button
-            onClick={() => setFilter('approved')}
-            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${
-              filter === 'approved' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-white'
-            }`}
-          >
-            Aprovados
-          </button>
-          <button
-            onClick={() => setFilter('rejected')}
-            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${
-              filter === 'rejected' ? 'bg-rose-600 text-white' : 'text-zinc-500 hover:text-white'
-            }`}
-          >
-            Recusados
-          </button>
+          <button onClick={() => setFilter('all')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'all' ? 'bg-[#E11D48] text-white' : 'text-zinc-500 hover:text-white'}`}>Todos</button>
+          <button onClick={() => setFilter('approved')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'approved' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Aprovados</button>
+          <button onClick={() => setFilter('rejected')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'rejected' ? 'bg-rose-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Recusados</button>
         </div>
-
-        {/* LISTA DE PEDIDOS */}
-        {filteredOrders.length === 0 ? (
-          <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center">
-            <Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
-            <p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido encontrado</p>
-          </div>
-        ) : (
+        {filteredOrders.length === 0 ? <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center"><Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" /><p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido encontrado</p></div> : (
           <div className="space-y-4">
             {filteredOrders.map((order) => (
               <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 hover:border-white/10 transition-colors">
                 <div className="flex items-start justify-between mb-4">
                   <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-base font-black text-white">{order.unit_name}</h3>
-                      {getStatusBadge(order.status)}
-                    </div>
+                    <div className="flex items-center gap-3 mb-2"><h3 className="text-base font-black text-white">{order.unit_name}</h3>{getStatusBadge(order.status)}</div>
                     <p className="text-xs text-zinc-500 font-medium">{order.user_email}</p>
-                    <p className="text-[10px] text-zinc-600 uppercase font-bold mt-1">
-                      Pedido #{order.id.slice(0, 8).toUpperCase()} • {' '}
-                      {new Date(order.created_at).toLocaleDateString('pt-BR', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </p>
+                    <p className="text-[10px] text-zinc-600 uppercase font-bold mt-1">Pedido #{order.id.slice(0, 8).toUpperCase()} • {new Date(order.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-black text-[#E11D48]">
-                      {formatCurrency(order.total_price || order.total_amount || 0)}
-                    </p>
-                    <p className="text-[9px] text-zinc-600 uppercase font-bold mt-1">
-                      {order.payment_method || 'PIX'}
-                    </p>
-                  </div>
+                  <div className="text-right"><p className="text-2xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</p><p className="text-[9px] text-zinc-600 uppercase font-bold mt-1">{order.payment_method || 'PIX'}</p></div>
                 </div>
-
-                {/* ITENS DO PEDIDO */}
                 <details className="group">
-                  <summary className="cursor-pointer text-[10px] text-zinc-500 uppercase font-black hover:text-white transition-colors list-none flex items-center gap-2">
-                    <svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                    Ver {order.items.length} {order.items.length === 1 ? 'item' : 'itens'}
-                  </summary>
-                  <div className="mt-4 bg-zinc-950/40 rounded-2xl p-4 space-y-2">
-                    {order.items.map((item: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-xl bg-zinc-900 overflow-hidden">
-                            <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
-                          </div>
-                          <span className="text-zinc-300 font-medium">{item.name} ({item.selectedSize})</span>
-                        </div>
-                        <span className="text-white font-bold">
-                          {item.quantity}x R$ {item.price.toFixed(2)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <summary className="cursor-pointer text-[10px] text-zinc-500 uppercase font-black hover:text-white transition-colors list-none flex items-center gap-2"><svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg> Ver {order.items.length} {order.items.length === 1 ? 'item' : 'itens'}</summary>
+                  <div className="mt-4 bg-zinc-950/40 rounded-2xl p-4 space-y-2">{order.items.map((item: any, idx: number) => (<div key={idx} className="flex items-center justify-between text-sm"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-xl bg-zinc-900 overflow-hidden"><img src={item.image_url} alt={item.name} className="w-full h-full object-cover" /></div><span className="text-zinc-300 font-medium">{item.name} ({item.selectedSize})</span></div><span className="text-white font-bold">{item.quantity}x R$ {item.price.toFixed(2)}</span></div>))}</div>
                 </details>
-
-                {/* INFORMAÇÕES DE VALIDAÇÃO */}
-                {order.validated_at && (
-                  <div className="mt-4 pt-4 border-t border-white/5 text-[9px] text-zinc-600">
-                    Validado em {new Date(order.validated_at).toLocaleDateString('pt-BR', {
-                      day: '2-digit',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </div>
-                )}
+                {order.validated_at && <div className="mt-4 pt-4 border-t border-white/5 text-[9px] text-zinc-600">Validado em {new Date(order.validated_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>}
               </div>
             ))}
           </div>
@@ -658,66 +503,32 @@ export default function App() {
 
   const ClientOrderHistory = ({ userId }: { userId: string }) => {
     const [historyOrders, setHistoryOrders] = useState<any[]>([]);
-
     useEffect(() => {
       const fetchHistory = async () => {
-        const { data } = await supabase
-          .from('orders')
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false });
-        
+        const { data } = await supabase.from('orders').select('*').eq('user_id', userId).order('created_at', { ascending: false });
         if (data) setHistoryOrders(data);
       };
       fetchHistory();
     }, [userId]);
-
     const getStatusColor = (status: string) => {
       if (status.includes('AGUARDANDO')) return 'text-yellow-500';
       if (status.includes('PAGO')) return 'text-emerald-500';
       if (status.includes('RECUSADO')) return 'text-rose-500';
       return 'text-zinc-500';
     };
-
-    if (historyOrders.length === 0) {
-      return (
-        <div className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-12 text-center">
-          <Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
-          <p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido realizado</p>
-        </div>
-      );
-    }
-
+    if (historyOrders.length === 0) return <div className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-12 text-center"><Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" /><p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido realizado</p></div>;
     return (
       <div className="grid gap-4">
         {historyOrders.map((order) => (
           <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 flex items-center justify-between">
-            <div className="flex-1">
-              <p className="text-xs text-zinc-500 uppercase font-bold mb-1">
-                Pedido #{order.id.slice(0, 8).toUpperCase()}
-              </p>
-              <p className="text-sm font-black text-white mb-2">
-                {order.items.length} {order.items.length === 1 ? 'item' : 'itens'}
-              </p>
-              <p className={`text-[10px] uppercase font-black ${getStatusColor(order.status)}`}>
-                {order.status}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-xl font-black text-[#E11D48]">
-                {formatCurrency(order.total_price || order.total_amount || 0)}
-              </p>
-              <p className="text-[9px] text-zinc-600 mt-1">
-                {new Date(order.created_at).toLocaleDateString('pt-BR')}
-              </p>
-            </div>
+            <div className="flex-1"><p className="text-xs text-zinc-500 uppercase font-bold mb-1">Pedido #{order.id.slice(0, 8).toUpperCase()}</p><p className="text-sm font-black text-white mb-2">{order.items.length} {order.items.length === 1 ? 'item' : 'itens'}</p><p className={`text-[10px] uppercase font-black ${getStatusColor(order.status)}`}>{order.status}</p></div>
+            <div className="text-right"><p className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</p><p className="text-[9px] text-zinc-600 mt-1">{new Date(order.created_at).toLocaleDateString('pt-BR')}</p></div>
           </div>
         ))}
       </div>
     );
   };
 
-  // --- COMPUTED ---
   const totalRevenue = useMemo(() => orders.reduce((acc, order) => acc + (order.total_price || order.total_amount || 0), 0), [orders]);
   const mostActiveNetwork = useMemo(() => {
     if (orders.length === 0) return '---';
@@ -731,65 +542,43 @@ export default function App() {
     return top === '---' ? top : top.replace(/-/g, ' ').toUpperCase();
   }, [orders]);
 
-  // --- RENDER ---
   if (isLoading && !currentUser) return <Spinner />;
 
-  // 1. LOGIN / SIGNUP VIEW
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
         <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-[#E11D48]/10 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-[#E11D48]/5 rounded-full blur-[120px]" />
         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
-        
         <AnimatePresence mode="wait">
           {authFlow === 'initial' && (
             <motion.div key="initial" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-md z-10">
-              <div className="flex flex-col items-center mb-10">
-                <Logo className="w-20 h-20 mb-4" />
-                <h1 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.4em]">Tiquinho Corporate</h1>
-                <p className="text-zinc-600 text-xs mt-2 text-center">Plataforma de Uniformes Corporativos</p>
-              </div>
+              <div className="flex flex-col items-center mb-10"><Logo className="w-20 h-20 mb-4" /><h1 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.4em]">Tiquinho Corporate</h1><p className="text-zinc-600 text-xs mt-2 text-center">Plataforma de Uniformes Corporativos</p></div>
               <div className="space-y-4">
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setAuthFlow('admin')} className="w-full glass p-8 rounded-[40px] shadow-2xl hover:border-[#E11D48]/30 transition-all group">
-                  <div className="flex items-start gap-4">
-                    <div className="w-14 h-14 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#E11D48]/20 transition-colors"><ShieldCheck className="text-[#E11D48]" size={28} /></div>
-                    <div className="flex-1 text-left"><h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Gestor</h3><p className="text-zinc-500 text-xs font-medium">Gerenciar catálogo e pedidos da rede</p></div>
-                  </div>
+                  <div className="flex items-start gap-4"><div className="w-14 h-14 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#E11D48]/20 transition-colors"><ShieldCheck className="text-[#E11D48]" size={28} /></div><div className="flex-1 text-left"><h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Gestor</h3><p className="text-zinc-500 text-xs font-medium">Gerenciar catálogo e pedidos da rede</p></div></div>
                 </motion.button>
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setAuthFlow('client')} className="w-full glass p-8 rounded-[40px] shadow-2xl hover:border-[#E11D48]/30 transition-all group">
-                  <div className="flex items-start gap-4">
-                    <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors"><ShoppingCart className="text-emerald-500" size={28} /></div>
-                    <div className="flex-1 text-left"><h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Cliente</h3><p className="text-zinc-500 text-xs font-medium">Acessar catálogo e fazer pedidos</p></div>
-                  </div>
+                  <div className="flex items-start gap-4"><div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors"><ShoppingCart className="text-emerald-500" size={28} /></div><div className="flex-1 text-left"><h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Cliente</h3><p className="text-zinc-500 text-xs font-medium">Acessar catálogo e fazer pedidos</p></div></div>
                 </motion.button>
               </div>
             </motion.div>
           )}
-
           {(authFlow === 'admin' || authFlow === 'client') && (
             <motion.div key="auth" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className={`w-full ${isSigningUp && authFlow === 'client' ? 'max-w-4xl' : 'max-w-md'} z-10 transition-all duration-500`}>
               <button onClick={() => { setAuthFlow('initial'); setIsSigningUp(false); setIsRegistrationSuccess(false); }} className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>Voltar</button>
-              
               {isRegistrationSuccess ? (
                 <div className="glass p-10 rounded-[40px] shadow-2xl text-center">
-                  <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6"><Mail size={40} className="text-emerald-500" /></div>
-                  <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">Verifique seu E-mail</h2>
-                  <p className="text-zinc-400 text-sm mb-6">Enviamos um link de confirmação para <strong>{formData.email}</strong>.<br/>Por favor, clique no link para ativar sua conta corporativa.</p>
-                  <button onClick={() => { setIsRegistrationSuccess(false); setIsSigningUp(false); }} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors">Voltar para Login</button>
+                  <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6"><Mail size={40} className="text-emerald-500" /></div><h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">Verifique seu E-mail</h2><p className="text-zinc-400 text-sm mb-6">Enviamos um link de confirmação para <strong>{formData.email}</strong>.<br/>Por favor, clique no link para ativar sua conta corporativa.</p><button onClick={() => { setIsRegistrationSuccess(false); setIsSigningUp(false); }} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors">Voltar para Login</button>
                 </div>
               ) : (
                 <>
                   <div className="flex flex-col items-center mb-10">
-                    <div className={`w-16 h-16 ${authFlow === 'admin' ? 'bg-[#E11D48]/10' : 'bg-emerald-500/10'} rounded-2xl flex items-center justify-center mb-4`}>
-                        {authFlow === 'admin' ? <ShieldCheck className="text-[#E11D48]" size={32} /> : <ShoppingCart className="text-emerald-500" size={32} />}
-                    </div>
+                    <div className={`w-16 h-16 ${authFlow === 'admin' ? 'bg-[#E11D48]/10' : 'bg-emerald-500/10'} rounded-2xl flex items-center justify-center mb-4`}>{authFlow === 'admin' ? <ShieldCheck className="text-[#E11D48]" size={32} /> : <ShoppingCart className="text-emerald-500" size={32} />}</div>
                     <h1 className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.4em]">{authFlow === 'admin' ? 'Painel Gestor' : 'Portal Cliente'}</h1>
                   </div>
-                  
                   <div className="glass p-10 rounded-[40px] shadow-2xl">
                     <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">{isSigningUp ? (authFlow === 'admin' ? 'Criar Conta Admin' : 'Cadastro Corporativo') : 'Login Acesso'}</h2>
-                    
                     <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
                       {isSigningUp ? (
                          authFlow === 'admin' ? (
@@ -848,86 +637,30 @@ export default function App() {
         <header className="sticky top-0 z-50 glass px-6 py-4 border-b border-white/5">
           <div className="max-w-7xl mx-auto">
             <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <Logo />
-                <h2 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">
-                  Painel Jéssica
-                </h2>
-              </div>
-              <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 bg-zinc-800 rounded-2xl text-zinc-400 hover:text-[#E11D48]">
-                <LogOut size={20} />
-              </button>
+              <div className="flex items-center gap-3"><Logo /><h2 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Painel Jéssica</h2></div>
+              <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 bg-zinc-800 rounded-2xl text-zinc-400 hover:text-[#E11D48]"><LogOut size={20} /></button>
             </div>
-            
-            {/* NAVEGAÇÃO POR ABAS */}
             <div className="flex gap-2 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 relative overflow-hidden">
-              <motion.div
-                className="absolute inset-y-1.5 bg-[#E11D48] rounded-xl"
-                animate={{
-                  x: adminTab === 'products' ? '4px' : adminTab === 'pending' ? 'calc(33.333% + 4px)' : 'calc(66.666% + 4px)',
-                  width: 'calc(33.333% - 8px)'
-                }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              />
-              
-              <button
-                onClick={() => setAdminTab('products')}
-                className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${
-                  adminTab === 'products' ? 'text-white' : 'text-zinc-500'
-                }`}
-              >
-                <PlusCircle size={14} className="inline mr-2" />
-                Produtos
-              </button>
-              
-              <button
-                onClick={() => setAdminTab('pending')}
-                className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${
-                  adminTab === 'pending' ? 'text-white' : 'text-zinc-500'
-                }`}
-              >
-                <Hourglass size={14} className="inline mr-2" />
-                Pendentes
-              </button>
-              
-              <button
-                onClick={() => setAdminTab('history')}
-                className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${
-                  adminTab === 'history' ? 'text-white' : 'text-zinc-500'
-                }`}
-              >
-                <Package size={14} className="inline mr-2" />
-                Histórico
-              </button>
+              <motion.div className="absolute inset-y-1.5 bg-[#E11D48] rounded-xl" animate={{ x: adminTab === 'products' ? '4px' : adminTab === 'pending' ? 'calc(33.333% + 4px)' : 'calc(66.666% + 4px)', width: 'calc(33.333% - 8px)' }} transition={{ type: "spring", stiffness: 300, damping: 30 }} />
+              <button onClick={() => setAdminTab('products')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'products' ? 'text-white' : 'text-zinc-500'}`}><PlusCircle size={14} className="inline mr-2" />Produtos</button>
+              <button onClick={() => setAdminTab('pending')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'pending' ? 'text-white' : 'text-zinc-500'}`}><Hourglass size={14} className="inline mr-2" />Pendentes</button>
+              <button onClick={() => setAdminTab('history')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'history' ? 'text-white' : 'text-zinc-500'}`}><Package size={14} className="inline mr-2" />Histórico</button>
             </div>
           </div>
         </header>
 
         <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
-          
-          {/* ABA: PRODUTOS */}
           {adminTab === 'products' && (
             <>
-              {/* DASHBOARD PERFORMANCE */}
               <section>
                 <h3 className="text-xl font-black uppercase tracking-tighter mb-6 flex items-center gap-2"><TrendingUp className="text-[#E11D48]" /> Performance Global</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
-                    <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center mb-2"><LayoutGrid className="text-blue-500" size={20} /></div>
-                    <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Modelos Ativos</span><h4 className="text-3xl font-black text-white">{products.length}</h4></div>
-                  </div>
-                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
-                    <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-2"><DollarSign className="text-emerald-500" size={20} /></div>
-                    <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Receita Confirmada</span><h4 className="text-3xl font-black text-white">{formatCurrency(totalRevenue)}</h4></div>
-                  </div>
-                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40">
-                    <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center mb-2"><TrendingUp className="text-rose-500" size={20} /></div>
-                    <div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">{mostActiveNetwork}</h4></div>
-                  </div>
+                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40"><div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center mb-2"><LayoutGrid className="text-blue-500" size={20} /></div><div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Modelos Ativos</span><h4 className="text-3xl font-black text-white">{products.length}</h4></div></div>
+                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40"><div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-2"><DollarSign className="text-emerald-500" size={20} /></div><div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Receita Confirmada</span><h4 className="text-3xl font-black text-white">{formatCurrency(totalRevenue)}</h4></div></div>
+                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40"><div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center mb-2"><TrendingUp className="text-rose-500" size={20} /></div><div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">{mostActiveNetwork}</h4></div></div>
                 </div>
               </section>
 
-              {/* FORMULÁRIO DE PRODUTO */}
               <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
                 <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Gerenciar Catálogo</h2>
                 <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
@@ -948,22 +681,88 @@ export default function App() {
                         <input type="number" placeholder="Mínimo" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
                         <input type="number" placeholder="Dias Produção" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
                     </div>
-                    {/* Tamanhos */}
                     <div className="flex gap-2">
                          {['P', 'M', 'G', 'GG', 'XG', 'Único'].map(size => (
                            <button type="button" key={size} onClick={() => { const sizes = newProduct.available_sizes.includes(size) ? newProduct.available_sizes.filter(s => s !== size) : [...newProduct.available_sizes, size]; setNewProduct({...newProduct, available_sizes: sizes}); }} className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400'}`}>{size}</button>
                          ))}
                     </div>
-                    <div className="relative">
-                        <input type="text" list="admin-network-list" placeholder="Rede Franqueada" value={newProduct.network_tag} onChange={e => setNewProduct({...newProduct, network_tag: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm font-bold" required />
-                        <datalist id="admin-network-list">{availableNetworks.map(net => <option key={net} value={net} />)}</datalist>
+                    <div className="space-y-3">
+                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest block">Disponibilidade</label>
+                        
+                        <label className={`flex items-center gap-3 p-4 border rounded-2xl cursor-pointer transition-all ${newProduct.network_tags.includes('*') ? 'bg-[#E11D48]/10 border-[#E11D48] shadow-lg shadow-rose-900/20' : 'bg-zinc-950 border-white/5 hover:border-[#E11D48]/30'}`}>
+                            <input type="checkbox" checked={newProduct.network_tags.includes('*')} onChange={(e) => { if (e.target.checked) { setNewProduct({...newProduct, network_tags: ['*']}); } else { setNewProduct({...newProduct, network_tags: []}); } }} className="w-5 h-5 accent-[#E11D48]" />
+                            <div className="flex-1">
+                                <p className={`text-sm font-black ${newProduct.network_tags.includes('*') ? 'text-[#E11D48]' : 'text-white'}`}>Todos os Clientes</p>
+                                <p className="text-[10px] text-zinc-500 uppercase font-bold">Produto visível em toda a plataforma</p>
+                            </div>
+                        </label>
+
+                        {!newProduct.network_tags.includes('*') && (
+                            <div className="space-y-2">
+                                 <div className="bg-zinc-950 border border-white/5 rounded-2xl overflow-hidden">
+                                    <div className="p-3 border-b border-white/5 bg-zinc-900/50">
+                                        <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Redes Cadastradas</p>
+                                    </div>
+                                    <div className="p-2 max-h-60 overflow-y-auto space-y-1 custom-scrollbar">
+                                        {clientProfiles.length === 0 ? (
+                                            <p className="text-xs text-zinc-600 text-center py-6 italic">Nenhum cliente encontrado.</p>
+                                        ) : (
+                                            clientProfiles.map((profile) => (
+                                                <label key={profile.network_tag} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${newProduct.network_tags.includes(profile.network_tag) ? 'bg-[#E11D48]/5 border border-[#E11D48]/20' : 'hover:bg-zinc-900 border border-transparent'}`}>
+                                                    <input type="checkbox" checked={newProduct.network_tags.includes(profile.network_tag)} onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            setNewProduct({ ...newProduct, network_tags: [...newProduct.network_tags, profile.network_tag] });
+                                                        } else {
+                                                            setNewProduct({ ...newProduct, network_tags: newProduct.network_tags.filter(t => t !== profile.network_tag) });
+                                                        }
+                                                    }} className="w-4 h-4 accent-[#E11D48]" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs font-bold text-white truncate">{profile.unit_name}</p>
+                                                        <p className="text-[9px] text-zinc-500 font-bold truncate">{profile.network_tag}</p>
+                                                    </div>
+                                                </label>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="bg-zinc-950 border border-white/5 rounded-2xl p-3">
+                                     <p className="text-[9px] font-black uppercase text-zinc-500 tracking-widest mb-2">Adicionar Manualmente</p>
+                                     <div className="flex gap-2">
+                                        <input 
+                                            type="text" 
+                                            placeholder="Ex: nova-rede" 
+                                            className="flex-1 bg-zinc-900/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-[#E11D48] outline-none"
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    const val = e.currentTarget.value.trim();
+                                                    if (val && !newProduct.network_tags.includes(val)) {
+                                                        setNewProduct({...newProduct, network_tags: [...newProduct.network_tags, val]});
+                                                        e.currentTarget.value = '';
+                                                    }
+                                                }
+                                            }}
+                                        />
+                                     </div>
+                                     <div className="flex flex-wrap gap-2 mt-3">
+                                        {newProduct.network_tags.filter(t => t !== '*' && !clientProfiles.some(p => p.network_tag === t)).map(tag => (
+                                            <span key={tag} className="bg-zinc-800 border border-white/10 px-3 py-1 rounded-lg text-[10px] text-white flex items-center gap-2">
+                                                {tag}
+                                                <button type="button" onClick={() => setNewProduct({...newProduct, network_tags: newProduct.network_tags.filter(t => t !== tag)})} className="hover:text-[#E11D48]"><X size={12}/></button>
+                                            </span>
+                                        ))}
+                                     </div>
+                                </div>
+                            </div>
+                        )}
+                        {newProduct.network_tags.length > 0 && !newProduct.network_tags.includes('*') && <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider text-center">✓ {newProduct.network_tags.length} {newProduct.network_tags.length === 1 ? 'rede selecionada' : 'redes selecionadas'}</p>}
                     </div>
                     <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar' : 'Publicar'}</button>
                   </div>
                 </form>
               </section>
 
-              {/* LISTA DE PRODUTOS */}
               <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   {products.map(p => (
                     <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 flex items-center gap-4 group hover:border-[#E11D48]/30 transition-all">
@@ -972,7 +771,21 @@ export default function App() {
                         <h4 className="text-[10px] font-bold text-white truncate uppercase mb-1">{p.name}</h4>
                         <p className="text-[9px] font-bold text-zinc-500 uppercase">{p.network_tag}</p>
                         <div className="flex gap-2 mt-2">
-                          <button onClick={() => { setEditingId(p.id); setNewProduct({ ...p, price: p.price.toString(), min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [], description: p.description || '' }); window.scrollTo({ top: 800, behavior: 'smooth' }); }} className="text-xs text-zinc-400 hover:text-white">Editar</button>
+                          <button onClick={() => { 
+                              setEditingId(p.id); 
+                              setNewProduct({ 
+                                  name: p.name,
+                                  price: p.price.toString(), 
+                                  image_url: p.image_url,
+                                  network_tags: [p.network_tag],
+                                  category: p.category,
+                                  description: p.description || '', 
+                                  min_order: p.min_order.toString(), 
+                                  production_days: p.production_days.toString(), 
+                                  available_sizes: p.available_sizes || []
+                              }); 
+                              window.scrollTo({ top: 800, behavior: 'smooth' }); 
+                          }} className="text-xs text-zinc-400 hover:text-white">Editar</button>
                           <button onClick={() => { if(confirm("Excluir?")) { supabase.from('products').delete().eq('id', p.id).then(() => setProducts(products.filter(pr => pr.id !== p.id))); } }} className="text-xs text-rose-500 hover:text-rose-400">Excluir</button>
                         </div>
                       </div>
@@ -982,7 +795,6 @@ export default function App() {
             </>
           )}
 
-          {/* ABA: PEDIDOS PENDENTES */}
           {adminTab === 'pending' && (
             <section className="space-y-6">
                <div className="flex items-center justify-between">
@@ -992,10 +804,7 @@ export default function App() {
             </section>
           )}
 
-          {/* ABA: HISTÓRICO COMPLETO */}
-          {adminTab === 'history' && (
-            <OrdersHistory />
-          )}
+          {adminTab === 'history' && <OrdersHistory />}
 
         </main>
       </div>
