@@ -4,7 +4,7 @@ import {
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
   Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown,
-  Building2, Phone, User, Mail, Lock, Search, Send, Check, AlertTriangle
+  Building2, Phone, User, Mail, Lock, Search, Send, Check, AlertTriangle, Users as UsersIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -97,7 +97,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
-  const [adminTab, setAdminTab] = useState<'products' | 'pending' | 'history'>('products');
+  const [adminTab, setAdminTab] = useState<'products' | 'pending' | 'history' | 'users'>('products');
   
   const [formData, setFormData] = useState({ 
     email: '', password: '', unit_name: '', network_tag: '', role: 'user' as 'user' | 'admin', 
@@ -117,6 +117,7 @@ export default function App() {
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
   const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
   const [clientProfiles, setClientProfiles] = useState<Array<{network_tag: string, unit_name: string, email: string}>>([]);
+  const [usersList, setUsersList] = useState<any[]>([]); // Lista de usuários para o Admin
   
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -202,6 +203,42 @@ export default function App() {
   };
 
   useEffect(() => { if(currentUser) fetchInitialData(); }, [currentUser]);
+
+  // Fetch Users for Admin
+  const fetchUsers = async () => {
+    if (currentUser?.role !== 'admin') return;
+    try {
+      // Nota: O prompt pediu 'users', mas baseando-se no código existente que usa 'profiles',
+      // vamos buscar de 'profiles' para garantir que os dados de unidade e rede existam.
+      const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      setUsersList(data || []);
+    } catch (error) {
+      console.error("Erro ao buscar usuários:", error);
+      showToast("Erro ao carregar usuários", "error");
+    }
+  };
+
+  useEffect(() => {
+    if (adminTab === 'users') {
+      fetchUsers();
+    }
+  }, [adminTab]);
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm('Tem certeza que deseja excluir este usuário? Essa ação é irreversível.')) return;
+    try {
+      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      if (error) throw error;
+      showToast("Usuário excluído com sucesso");
+      fetchUsers();
+      // Atualiza também a lista de redes disponíveis
+      fetchInitialData();
+    } catch (error) {
+      console.error("Erro ao excluir usuário:", error);
+      showToast("Erro ao excluir usuário", "error");
+    }
+  };
 
   useEffect(() => {
     if (!currentUser) return;
@@ -641,10 +678,26 @@ export default function App() {
               <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 bg-zinc-800 rounded-2xl text-zinc-400 hover:text-[#E11D48]"><LogOut size={20} /></button>
             </div>
             <div className="flex gap-2 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 relative overflow-hidden">
-              <motion.div className="absolute inset-y-1.5 bg-[#E11D48] rounded-xl" animate={{ x: adminTab === 'products' ? '4px' : adminTab === 'pending' ? 'calc(33.333% + 4px)' : 'calc(66.666% + 4px)', width: 'calc(33.333% - 8px)' }} transition={{ type: "spring", stiffness: 300, damping: 30 }} />
-              <button onClick={() => setAdminTab('products')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'products' ? 'text-white' : 'text-zinc-500'}`}><PlusCircle size={14} className="inline mr-2" />Produtos</button>
-              <button onClick={() => setAdminTab('pending')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'pending' ? 'text-white' : 'text-zinc-500'}`}><Hourglass size={14} className="inline mr-2" />Pendentes</button>
-              <button onClick={() => setAdminTab('history')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'history' ? 'text-white' : 'text-zinc-500'}`}><Package size={14} className="inline mr-2" />Histórico</button>
+               {/* 
+                 Ajuste de animação para 4 abas. 
+                 Largura base: ~25%.
+                 Posições: 0%, 25%, 50%, 75%
+               */}
+              <motion.div 
+                className="absolute inset-y-1.5 bg-[#E11D48] rounded-xl" 
+                animate={{ 
+                  x: adminTab === 'products' ? '4px' 
+                     : adminTab === 'pending' ? 'calc(25% + 4px)' 
+                     : adminTab === 'history' ? 'calc(50% + 4px)' 
+                     : 'calc(75% + 4px)', 
+                  width: 'calc(25% - 8px)' 
+                }} 
+                transition={{ type: "spring", stiffness: 300, damping: 30 }} 
+              />
+              <button onClick={() => setAdminTab('products')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'products' ? 'text-white' : 'text-zinc-500'}`}><PlusCircle size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Produtos</span></button>
+              <button onClick={() => setAdminTab('pending')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'pending' ? 'text-white' : 'text-zinc-500'}`}><Hourglass size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Pendentes</span></button>
+              <button onClick={() => setAdminTab('history')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'history' ? 'text-white' : 'text-zinc-500'}`}><Package size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Histórico</span></button>
+              <button onClick={() => setAdminTab('users')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'users' ? 'text-white' : 'text-zinc-500'}`}><UsersIcon size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Acessos</span></button>
             </div>
           </div>
         </header>
@@ -805,6 +858,53 @@ export default function App() {
           )}
 
           {adminTab === 'history' && <OrdersHistory />}
+
+          {adminTab === 'users' && (
+            <section className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3"><UsersIcon className="text-[#E11D48]" /> Controle de Acessos</h2>
+              </div>
+              <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-8">
+                 {usersList.length === 0 ? (
+                    <div className="text-center py-12">
+                       <UsersIcon className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
+                       <p className="text-zinc-600 uppercase font-black text-xs">Nenhum usuário encontrado</p>
+                    </div>
+                 ) : (
+                    <div className="grid grid-cols-1 gap-4">
+                      {usersList.map((user) => (
+                        <div key={user.id} className="bg-zinc-950/40 border border-white/5 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-white/10 transition-colors">
+                           <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-[#E11D48]/10 flex items-center justify-center text-[#E11D48] font-black text-lg">
+                                {user.unit_name ? user.unit_name.charAt(0).toUpperCase() : 'U'}
+                              </div>
+                              <div>
+                                 <h4 className="text-sm font-black text-white">{user.unit_name || 'Sem nome'}</h4>
+                                 <div className="flex flex-wrap gap-2 mt-1">
+                                    <span className="text-[9px] font-bold text-zinc-500 uppercase bg-zinc-900 px-2 py-0.5 rounded border border-white/5">{user.network_tag || 'Sem rede'}</span>
+                                    <span className="text-[9px] font-bold text-zinc-500 uppercase bg-zinc-900 px-2 py-0.5 rounded border border-white/5">{user.email}</span>
+                                 </div>
+                              </div>
+                           </div>
+                           <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
+                              <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${user.role === 'admin' ? 'bg-[#E11D48]/10 text-[#E11D48]' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                {user.role === 'admin' ? 'Gestor' : 'Franqueado'}
+                              </span>
+                              <button 
+                                onClick={() => handleDeleteUser(user.id)}
+                                className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-500 hover:bg-rose-600/10 hover:text-rose-500 transition-colors"
+                                title="Excluir Usuário"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                           </div>
+                        </div>
+                      ))}
+                    </div>
+                 )}
+              </div>
+            </section>
+          )}
 
         </main>
       </div>
