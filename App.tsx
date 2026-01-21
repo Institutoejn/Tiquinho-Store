@@ -150,7 +150,8 @@ export default function App() {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (session) {
-          const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+          // MODIFICADO: Busca na tabela 'users' em vez de 'profiles'
+          const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
           if (profile) {
             const user: UserType = { id: session.user.id, email: session.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role };
             if (mounted) { setCurrentUser(user); localStorage.setItem('tiquinho_session', JSON.stringify(user)); }
@@ -180,8 +181,9 @@ export default function App() {
 
       if (currentUser.role === 'admin') {
         try {
+            // MODIFICADO: Busca na tabela 'users' em vez de 'profiles'
             const { data: profs } = await supabase
-                .from('profiles')
+                .from('users')
                 .select('network_tag, unit_name, email')
                 .neq('role', 'admin')
                 .order('network_tag');
@@ -210,7 +212,8 @@ export default function App() {
     if (currentUser?.role !== 'admin') return;
     setLoadingUsers(true);
     try {
-      const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+      // MODIFICADO: Busca na tabela 'users'
+      const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       setUsersList(data || []);
     } catch (error) {
@@ -235,7 +238,8 @@ export default function App() {
     const confirmed = window.confirm("Deseja realmente excluir este acesso? Esta ação é permanente no banco de dados");
     if (!confirmed) return;
     try {
-      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      // MODIFICADO: Deleta da tabela 'users'
+      const { error } = await supabase.from('users').delete().eq('id', userId);
       if (error) throw error;
       showToast("Acesso excluído com sucesso!");
       setUsersList(prev => prev.filter(user => user.id !== userId));
@@ -285,7 +289,8 @@ export default function App() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email.trim(), password: formData.password });
       if (error) throw error;
-      const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
+      // MODIFICADO: Busca na tabela 'users'
+      const { data: profile } = await supabase.from('users').select('*').eq('id', data.user.id).single();
       if (!profile) throw new Error("Perfil não encontrado. Contate o suporte.");
       setCurrentUser({ id: data.user.id, email: data.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
     } catch (err: any) { showToast(err.message, "error"); }
@@ -312,7 +317,8 @@ export default function App() {
       if (error) throw error;
 
       if (data.user) {
-         await supabase.from('profiles').upsert({
+         // MODIFICADO: Insere na tabela 'users' IMEDIATAMENTE após o cadastro
+         await supabase.from('users').upsert({
             id: data.user.id,
             email: formData.email.trim(),
             unit_name: formData.unit_name,
