@@ -150,7 +150,6 @@ export default function App() {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (session) {
-          // MODIFICADO: Busca na tabela 'users' em vez de 'profiles'
           const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
           if (profile) {
             const user: UserType = { id: session.user.id, email: session.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role };
@@ -181,7 +180,6 @@ export default function App() {
 
       if (currentUser.role === 'admin') {
         try {
-            // MODIFICADO: Busca na tabela 'users' em vez de 'profiles'
             const { data: profs } = await supabase
                 .from('users')
                 .select('network_tag, unit_name, email')
@@ -212,7 +210,6 @@ export default function App() {
     if (currentUser?.role !== 'admin') return;
     setLoadingUsers(true);
     try {
-      // MODIFICADO: Busca na tabela 'users'
       const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       setUsersList(data || []);
@@ -238,7 +235,6 @@ export default function App() {
     const confirmed = window.confirm("Deseja realmente excluir este acesso? Esta ação é permanente no banco de dados");
     if (!confirmed) return;
     try {
-      // MODIFICADO: Deleta da tabela 'users'
       const { error } = await supabase.from('users').delete().eq('id', userId);
       if (error) throw error;
       showToast("Acesso excluído com sucesso!");
@@ -289,7 +285,6 @@ export default function App() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email.trim(), password: formData.password });
       if (error) throw error;
-      // MODIFICADO: Busca na tabela 'users'
       const { data: profile } = await supabase.from('users').select('*').eq('id', data.user.id).single();
       if (!profile) throw new Error("Perfil não encontrado. Contate o suporte.");
       setCurrentUser({ id: data.user.id, email: data.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
@@ -317,7 +312,6 @@ export default function App() {
       if (error) throw error;
 
       if (data.user) {
-         // MODIFICADO: Insere na tabela 'users' IMEDIATAMENTE após o cadastro
          await supabase.from('users').upsert({
             id: data.user.id,
             email: formData.email.trim(),
@@ -589,7 +583,8 @@ export default function App() {
     if (orders.length === 0) return '---';
     const salesByNetwork: Record<string, number> = {};
     orders.forEach(order => {
-      const tag = order.network_tag ? order.network_tag.trim().toLowerCase() : 'desconhecido';
+      // CORREÇÃO: Garante string vazia se nulo antes de toLowerCase
+      const tag = (order.network_tag || '').toLowerCase().trim() || 'desconhecido';
       salesByNetwork[tag] = (salesByNetwork[tag] || 0) + (order.total_price || order.total_amount || 0);
     });
     let top = '---'; let max = 0;
@@ -990,7 +985,12 @@ export default function App() {
         </div>
         
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-          {products.filter(p => (p.network_tag?.toLowerCase().trim() || '') === (currentUser?.network_tag?.toLowerCase().trim() || '')).map(p => {
+          {products.filter(p => {
+             // CORREÇÃO: Garante string vazia se nulo antes de toLowerCase
+             const pTag = (p.network_tag || '').toLowerCase().trim();
+             const uTag = (currentUser?.network_tag || '').toLowerCase().trim();
+             return pTag === uTag;
+          }).map(p => {
              const selectedSize = clientSelectedSizes[p.id] || (p.available_sizes && p.available_sizes.length > 0 ? p.available_sizes[0] : 'Único');
              return (
               <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group shadow-2xl hover:border-[#E11D48]/30 transition-all">
