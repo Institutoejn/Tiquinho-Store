@@ -117,8 +117,10 @@ export default function App() {
   const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
   const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
   const [clientProfiles, setClientProfiles] = useState<Array<{network_tag: string, unit_name: string, email: string}>>([]);
-  const [usersList, setUsersList] = useState<any[]>([]); // Lista de usuários para o Admin
   
+  const [usersList, setUsersList] = useState<any[]>([]); // Lista de usuários para o Admin
+  const [loadingUsers, setLoadingUsers] = useState(false); // Estado de carregamento dos usuários
+
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -207,15 +209,17 @@ export default function App() {
   // Fetch Users for Admin
   const fetchUsers = async () => {
     if (currentUser?.role !== 'admin') return;
+    setLoadingUsers(true);
     try {
-      // Nota: O prompt pediu 'users', mas baseando-se no código existente que usa 'profiles',
-      // vamos buscar de 'profiles' para garantir que os dados de unidade e rede existam.
+      // Buscando da tabela 'profiles' para obter dados corporativos (unit_name, network_tag)
       const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       setUsersList(data || []);
     } catch (error) {
       console.error("Erro ao buscar usuários:", error);
       showToast("Erro ao carregar usuários", "error");
+    } finally {
+      setLoadingUsers(false);
     }
   };
 
@@ -226,14 +230,26 @@ export default function App() {
   }, [adminTab]);
 
   const handleDeleteUser = async (userId: string) => {
-    if (!confirm('Tem certeza que deseja excluir este usuário? Essa ação é irreversível.')) return;
+    // 1. Regra de Segurança: Impedir autoexclusão
+    if (userId === currentUser?.id) {
+        showToast("Você não pode excluir seu próprio usuário.", "error");
+        return;
+    }
+
+    // 2. Confirmação
+    const confirmed = window.confirm("Deseja realmente excluir este acesso? Esta ação é permanente no banco de dados");
+    if (!confirmed) return;
+
     try {
+      // 3. Exclusão Real
       const { error } = await supabase.from('profiles').delete().eq('id', userId);
       if (error) throw error;
-      showToast("Usuário excluído com sucesso");
-      fetchUsers();
-      // Atualiza também a lista de redes disponíveis
-      fetchInitialData();
+      
+      showToast("Acesso excluído com sucesso!");
+      
+      // 4. Atualização de Estado (Re-fetch ou Optimistic)
+      setUsersList(prev => prev.filter(user => user.id !== userId));
+      fetchInitialData(); // Atualiza também os filtros de rede se necessário
     } catch (error) {
       console.error("Erro ao excluir usuário:", error);
       showToast("Erro ao excluir usuário", "error");
@@ -355,14 +371,7 @@ export default function App() {
     let targetTags = p.network_tags;
     
     if (targetTags.includes('*')) {
-        // Se selecionar "Todos", tentamos replicar para todos os perfis cadastrados
-        // E removemos o '*', pois o banco precisa de tags especificas para o filtro funcionar
         const allProfileTags = clientProfiles.map(cp => cp.network_tag);
-        
-        // Se não houver perfis (primeiro uso), não podemos replicar.
-        // Nesse caso, se o usuário selecionou 'Todos', e não há clientes, isso é um erro lógico.
-        // A menos que queiramos permitir salvar com '*' e mudar a lógica de filtro.
-        // Como a regra é "NÃO alterar o filtro", devemos garantir que existam tags.
         
         if (allProfileTags.length === 0) {
              showToast("Não há clientes cadastrados para aplicar 'Todos'. Adicione redes manualmente.", "error");
@@ -372,7 +381,6 @@ export default function App() {
         targetTags = allProfileTags;
     }
     
-    // Remover duplicatas e garantir que não tenha '*'
     targetTags = [...new Set(targetTags)].filter(t => t !== '*');
 
     const productsToSave = targetTags.map(tag => ({
@@ -865,7 +873,12 @@ export default function App() {
                 <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3"><UsersIcon className="text-[#E11D48]" /> Controle de Acessos</h2>
               </div>
               <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-8">
-                 {usersList.length === 0 ? (
+                 {loadingUsers ? (
+                     <div className="text-center py-12 text-zinc-600">
+                        <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" />
+                        <p className="text-xs uppercase font-black tracking-widest">Carregando usuários...</p>
+                     </div>
+                 ) : usersList.length === 0 ? (
                     <div className="text-center py-12">
                        <UsersIcon className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
                        <p className="text-zinc-600 uppercase font-black text-xs">Nenhum usuário encontrado</p>
