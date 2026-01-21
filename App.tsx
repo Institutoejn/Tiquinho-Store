@@ -4,7 +4,8 @@ import {
   UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
   Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
   Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown,
-  Building2, Phone, User, Mail, Lock, Search, Send, Check, AlertTriangle, Users as UsersIcon
+  Building2, Phone, User, Mail, Lock, Search, Send, Check, AlertTriangle, Users as UsersIcon,
+  Factory, CheckCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -425,12 +426,13 @@ export default function App() {
     const handleValidateOrder = async (orderId: string, approve: boolean) => {
       try {
         const { error } = await supabase.from('orders').update({
-            status: approve ? 'PAGO/AGUARDANDO PRODUÇÃO' : 'PAGAMENTO RECUSADO',
+            // MUDANÇA: Status azul para pagamento aprovado
+            status: approve ? 'PAGO / EM PRODUÇÃO' : 'PAGAMENTO RECUSADO',
             validated_by: currentUser?.id,
             validated_at: new Date().toISOString()
           }).eq('id', orderId);
         if (error) throw error;
-        showToast(approve ? 'Pedido aprovado!' : 'Pedido recusado', 'success');
+        showToast(approve ? 'Pagamento confirmado! Pedido em produção.' : 'Pedido recusado.', 'success');
         fetchOrders();
       } catch (err) { showToast('Erro ao validar pedido', 'error'); }
     };
@@ -463,7 +465,7 @@ export default function App() {
             </div>
             <div className="flex gap-3">
               <button onClick={() => handleValidateOrder(order.id, false)} className="flex-1 bg-rose-600/10 text-rose-500 py-3 rounded-xl font-black uppercase text-[9px] hover:bg-rose-600/20 transition-colors">Recusar</button>
-              <button onClick={() => handleValidateOrder(order.id, true)} className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black uppercase text-[9px] hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20">Aprovar Pagamento</button>
+              <button onClick={() => handleValidateOrder(order.id, true)} className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black uppercase text-[9px] hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20">Confirmar Pagamento</button>
             </div>
           </div>
         ))}
@@ -474,7 +476,7 @@ export default function App() {
   const OrdersHistory = () => {
     const [ordersHistory, setOrdersHistory] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState<'all' | 'approved' | 'rejected'>('all');
+    const [filter, setFilter] = useState<'all' | 'in_production' | 'completed' | 'rejected'>('all');
 
     useEffect(() => { fetchAllOrders(); }, []);
 
@@ -487,9 +489,23 @@ export default function App() {
       } catch (err) { console.error('Erro ao buscar histórico:', err); showToast('Erro ao carregar histórico', 'error'); } finally { setLoading(false); }
     };
 
+    const handleAdvanceStage = async (orderId: string) => {
+        try {
+            const { error } = await supabase.from('orders').update({
+                status: 'PEDIDO PRODUZIDO'
+            }).eq('id', orderId);
+            if(error) throw error;
+            showToast("Pedido marcado como Produzido!", "success");
+            fetchAllOrders();
+        } catch(err) {
+            showToast("Erro ao atualizar status", "error");
+        }
+    };
+
     const filteredOrders = ordersHistory.filter(order => {
       if (filter === 'all') return true;
-      if (filter === 'approved') return order.status === 'PAGO/AGUARDANDO PRODUÇÃO';
+      if (filter === 'in_production') return order.status === 'PAGO / EM PRODUÇÃO';
+      if (filter === 'completed') return order.status === 'PEDIDO PRODUZIDO';
       if (filter === 'rejected') return order.status === 'PAGAMENTO RECUSADO';
       return true;
     });
@@ -497,15 +513,19 @@ export default function App() {
     const stats = {
       total: ordersHistory.length,
       pending: ordersHistory.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length,
-      approved: ordersHistory.filter(o => o.status === 'PAGO/AGUARDANDO PRODUÇÃO').length,
+      inProduction: ordersHistory.filter(o => o.status === 'PAGO / EM PRODUÇÃO').length,
+      completed: ordersHistory.filter(o => o.status === 'PEDIDO PRODUZIDO').length,
       rejected: ordersHistory.filter(o => o.status === 'PAGAMENTO RECUSADO').length,
-      totalRevenue: ordersHistory.filter(o => o.status === 'PAGO/AGUARDANDO PRODUÇÃO').reduce((acc, o) => acc + (o.total_price || o.total_amount || 0), 0)
+      totalRevenue: ordersHistory.filter(o => o.status === 'PAGO / EM PRODUÇÃO' || o.status === 'PEDIDO PRODUZIDO').reduce((acc, o) => acc + (o.total_price || o.total_amount || 0), 0)
     };
 
     const getStatusBadge = (status: string) => {
-      if (status === 'AGUARDANDO VALIDAÇÃO') return <span className="px-3 py-1 bg-yellow-500/10 text-yellow-500 rounded-full text-[9px] font-black uppercase">Pendente</span>;
-      if (status === 'PAGO/AGUARDANDO PRODUÇÃO') return <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[9px] font-black uppercase">Aprovado</span>;
-      if (status === 'PAGAMENTO RECUSADO') return <span className="px-3 py-1 bg-rose-500/10 text-rose-500 rounded-full text-[9px] font-black uppercase">Recusado</span>;
+      if (status === 'AGUARDANDO VALIDAÇÃO') return <span className="px-3 py-1 bg-yellow-500/10 text-yellow-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><AlertCircle size={10} /> Pendente</span>;
+      // MUDANÇA: Status azul para produção
+      if (status === 'PAGO / EM PRODUÇÃO') return <span className="px-3 py-1 bg-blue-500/10 text-blue-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><Factory size={10} /> Em Produção</span>;
+      // MUDANÇA: Status verde para concluído
+      if (status === 'PEDIDO PRODUZIDO') return <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><CheckCheck size={10} /> Produzido</span>;
+      if (status === 'PAGAMENTO RECUSADO') return <span className="px-3 py-1 bg-rose-500/10 text-rose-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><X size={10} /> Recusado</span>;
       return <span className="px-3 py-1 bg-zinc-500/10 text-zinc-500 rounded-full text-[9px] font-black uppercase">{status}</span>;
     };
 
@@ -513,18 +533,23 @@ export default function App() {
 
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="bg-zinc-900/40 border border-white/5 rounded-[32px] p-6"><p className="text-[10px] text-zinc-500 uppercase font-black mb-2">Total Pedidos</p><p className="text-3xl font-black text-white">{stats.total}</p></div>
-          <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-[32px] p-6"><p className="text-[10px] text-yellow-600 uppercase font-black mb-2">Pendentes</p><p className="text-3xl font-black text-yellow-500">{stats.pending}</p></div>
-          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-[32px] p-6"><p className="text-[10px] text-emerald-600 uppercase font-black mb-2">Aprovados</p><p className="text-3xl font-black text-emerald-500">{stats.approved}</p></div>
-          <div className="bg-rose-500/5 border border-rose-500/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Recusados</p><p className="text-3xl font-black text-rose-500">{stats.rejected}</p></div>
-          <div className="bg-[#E11D48]/5 border border-[#E11D48]/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Faturamento</p><p className="text-2xl font-black text-[#E11D48]">{formatCurrency(stats.totalRevenue)}</p></div>
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <div className="bg-zinc-900/40 border border-white/5 rounded-[32px] p-6"><p className="text-[10px] text-zinc-500 uppercase font-black mb-2">Total</p><p className="text-2xl font-black text-white">{stats.total}</p></div>
+          <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-[32px] p-6"><p className="text-[10px] text-yellow-600 uppercase font-black mb-2">Pendentes</p><p className="text-2xl font-black text-yellow-500">{stats.pending}</p></div>
+          {/* MUDANÇA: Card azul para produção */}
+          <div className="bg-blue-500/5 border border-blue-500/20 rounded-[32px] p-6"><p className="text-[10px] text-blue-600 uppercase font-black mb-2">Produzindo</p><p className="text-2xl font-black text-blue-500">{stats.inProduction}</p></div>
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-[32px] p-6"><p className="text-[10px] text-emerald-600 uppercase font-black mb-2">Prontos</p><p className="text-2xl font-black text-emerald-500">{stats.completed}</p></div>
+          <div className="bg-rose-500/5 border border-rose-500/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Recusados</p><p className="text-2xl font-black text-rose-500">{stats.rejected}</p></div>
+          <div className="bg-[#E11D48]/5 border border-[#E11D48]/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Receita</p><p className="text-xl font-black text-[#E11D48]">{formatCurrency(stats.totalRevenue)}</p></div>
         </div>
-        <div className="flex gap-3 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 w-fit">
+        
+        <div className="flex flex-wrap gap-3 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 w-fit">
           <button onClick={() => setFilter('all')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'all' ? 'bg-[#E11D48] text-white' : 'text-zinc-500 hover:text-white'}`}>Todos</button>
-          <button onClick={() => setFilter('approved')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'approved' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Aprovados</button>
+          <button onClick={() => setFilter('in_production')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'in_production' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Em Produção</button>
+          <button onClick={() => setFilter('completed')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'completed' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Produzidos</button>
           <button onClick={() => setFilter('rejected')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'rejected' ? 'bg-rose-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Recusados</button>
         </div>
+
         {filteredOrders.length === 0 ? <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center"><Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" /><p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido encontrado</p></div> : (
           <div className="space-y-4">
             {filteredOrders.map((order) => (
@@ -537,6 +562,23 @@ export default function App() {
                   </div>
                   <div className="text-right"><p className="text-2xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</p><p className="text-[9px] text-zinc-600 uppercase font-bold mt-1">{order.payment_method || 'PIX'}</p></div>
                 </div>
+                
+                {/* MUDANÇA: Botão de ação rápida para concluir produção */}
+                {order.status === 'PAGO / EM PRODUÇÃO' && (
+                    <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <Factory size={18} className="text-blue-500 animate-pulse" />
+                            <div>
+                                <p className="text-xs font-bold text-white">Pedido em produção</p>
+                                <p className="text-[10px] text-zinc-400">Marque como concluído quando estiver pronto para envio.</p>
+                            </div>
+                        </div>
+                        <button onClick={() => handleAdvanceStage(order.id)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
+                           <CheckCheck size={14} /> Marcar como Produzido
+                        </button>
+                    </div>
+                )}
+
                 <details className="group">
                   <summary className="cursor-pointer text-[10px] text-zinc-500 uppercase font-black hover:text-white transition-colors list-none flex items-center gap-2"><svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg> Ver {order.items.length} {order.items.length === 1 ? 'item' : 'itens'}</summary>
                   <div className="mt-4 bg-zinc-950/40 rounded-2xl p-4 space-y-2">{order.items.map((item: any, idx: number) => (<div key={idx} className="flex items-center justify-between text-sm"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-xl bg-zinc-900 overflow-hidden"><img src={item.image_url} alt={item.name} className="w-full h-full object-cover" /></div><span className="text-zinc-300 font-medium">{item.name} ({item.selectedSize})</span></div><span className="text-white font-bold">{item.quantity}x R$ {item.price.toFixed(2)}</span></div>))}</div>
@@ -559,12 +601,16 @@ export default function App() {
       };
       fetchHistory();
     }, [userId]);
+    
+    // MUDANÇA: Novas cores para o cliente ver
     const getStatusColor = (status: string) => {
       if (status.includes('AGUARDANDO')) return 'text-yellow-500';
-      if (status.includes('PAGO')) return 'text-emerald-500';
+      if (status.includes('EM PRODUÇÃO')) return 'text-blue-500';
+      if (status.includes('PRODUZIDO')) return 'text-emerald-500';
       if (status.includes('RECUSADO')) return 'text-rose-500';
       return 'text-zinc-500';
     };
+
     if (historyOrders.length === 0) return <div className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-12 text-center"><Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" /><p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido realizado</p></div>;
     return (
       <div className="grid gap-4">
