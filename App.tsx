@@ -725,29 +725,51 @@ export default function App() {
                 <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Gerenciar Catálogo</h2>
                 <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
                   <div className="lg:col-span-4 flex flex-col gap-2">
+                     <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest pl-1">Imagem do Produto</label>
                      <div onClick={() => fileInputRef.current?.click()} className="aspect-[3/4] bg-zinc-950 border border-white/5 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 overflow-hidden relative group transition-all">
                       {newProduct.image_url ? ( <img src={newProduct.image_url} className="absolute inset-0 w-full h-full object-cover" /> ) : ( <div className="text-zinc-700 text-center group-hover:text-zinc-500 transition-colors"><ImageIcon className="mx-auto mb-3 w-10 h-10 stroke-1" /><p className="text-[9px] font-black uppercase tracking-widest">Upload Imagem</p></div> )}
                       <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setNewProduct({...newProduct, image_url: reader.result as string}); reader.readAsDataURL(file); } }} className="hidden" accept="image/*" />
                     </div>
                   </div>
                   <div className="lg:col-span-8 space-y-6">
-                    <input type="text" placeholder="Nome do Produto" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-                    <textarea rows={2} placeholder="Descrição" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                    <div className="grid grid-cols-2 gap-4">
-                        <input type="number" step="0.01" placeholder="Preço (R$)" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-                        <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm"><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option><option value="Unissex">Unissex</option><option value="Inverno">Inverno</option></select>
+                    <div>
+                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Nome do Uniforme</label>
+                        <input type="text" placeholder="Ex: Camiseta Polo Branca" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Descrição Detalhada</label>
+                        <textarea rows={2} placeholder="Detalhes sobre tecido, gola, acabamento..." value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
-                        <input type="number" placeholder="Mínimo" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                        <input type="number" placeholder="Dias Produção" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                        <div>
+                            <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Preço Unitário (R$)</label>
+                            <input type="number" step="0.01" placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Categoria / Estação</label>
+                            <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm"><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option><option value="Unissex">Unissex</option><option value="Inverno">Inverno</option></select>
+                        </div>
                     </div>
-                    <div className="flex gap-2">
-                         {['P', 'M', 'G', 'GG', 'XG', 'Único'].map(size => (
-                           <button type="button" key={size} onClick={() => { const sizes = newProduct.available_sizes.includes(size) ? newProduct.available_sizes.filter(s => s !== size) : [...newProduct.available_sizes, size]; setNewProduct({...newProduct, available_sizes: sizes}); }} className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400'}`}>{size}</button>
-                         ))}
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Pedido Mínimo (Un)</label>
+                            <input type="number" placeholder="10" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                        </div>
+                        <div>
+                             <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Prazo Produção (Dias)</label>
+                             <input type="number" placeholder="15" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Tamanhos Disponíveis</label>
+                        <div className="flex gap-2">
+                             {['P', 'M', 'G', 'GG', 'XG', 'Único'].map(size => (
+                               <button type="button" key={size} onClick={() => { const sizes = newProduct.available_sizes.includes(size) ? newProduct.available_sizes.filter(s => s !== size) : [...newProduct.available_sizes, size]; setNewProduct({...newProduct, available_sizes: sizes}); }} className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400'}`}>{size}</button>
+                             ))}
+                        </div>
                     </div>
                     <div className="space-y-3">
-                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest block">Disponibilidade</label>
+                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest block pl-1">Disponibilidade / Rede</label>
                         
                         <label className={`flex items-center gap-3 p-4 border rounded-2xl cursor-pointer transition-all ${newProduct.network_tags.includes('*') ? 'bg-[#E11D48]/10 border-[#E11D48] shadow-lg shadow-rose-900/20' : 'bg-zinc-950 border-white/5 hover:border-[#E11D48]/30'}`}>
                             <input type="checkbox" checked={newProduct.network_tags.includes('*')} onChange={(e) => { if (e.target.checked) { setNewProduct({...newProduct, network_tags: ['*']}); } else { setNewProduct({...newProduct, network_tags: []}); } }} className="w-5 h-5 accent-[#E11D48]" />
@@ -761,7 +783,7 @@ export default function App() {
                             <div className="space-y-2">
                                  <div className="bg-zinc-950 border border-white/5 rounded-2xl overflow-hidden">
                                     <div className="p-3 border-b border-white/5 bg-zinc-900/50">
-                                        <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Redes Cadastradas</p>
+                                        <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Rede / Franquia</p>
                                     </div>
                                     <div className="p-2 max-h-60 overflow-y-auto space-y-1 custom-scrollbar">
                                         {clientProfiles.length === 0 ? (
