@@ -293,6 +293,27 @@ export default function App() {
     finally { setIsLoading(false); }
   };
 
+  const checkCep = async () => {
+    if (formData.cep.length !== 8) return;
+    setIsLoading(true);
+    try {
+        const res = await fetch(`https://viacep.com.br/ws/${formData.cep}/json/`);
+        const data = await res.json();
+        if (!data.erro) {
+            setFormData(prev => ({
+                ...prev,
+                address_street: data.logradouro || prev.address_street,
+                address_city: data.localidade || prev.address_city,
+                address_state: data.uf || prev.address_state
+            }));
+        }
+    } catch (error) {
+        console.error("Erro ao buscar CEP", error);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault(); setIsLoading(true);
     if (authFlow === 'admin' && formData.adminKey !== 'TIQUINHO2026') { setIsLoading(false); return showToast("Chave inválida", "error"); }
@@ -319,7 +340,14 @@ export default function App() {
             unit_name: formData.unit_name,
             network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag.trim(),
             role: authFlow === 'admin' ? 'admin' : 'user',
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            // NOVOS CAMPOS PERSISTIDOS CONFORME SOLICITADO
+            cep: formData.cep,
+            address_street: formData.address_street,
+            address_city: formData.address_city,
+            contact_name: formData.contact_name,
+            phone: formData.phone,
+            cnpj: formData.cnpj
          }, { onConflict: 'id' });
       }
 
@@ -697,9 +725,9 @@ export default function App() {
                                 <input type="text" placeholder="Telefone *" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                                 <input type="text" placeholder="Nome Responsável" value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" />
                                 <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Endereço</div>
-                                <div className="relative"><input type="text" placeholder="CEP *" value={formData.cep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
-                                <input type="text" placeholder="Cidade" value={formData.address_city} readOnly className="w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
-                                <input type="text" placeholder="Logradouro" value={formData.address_street} readOnly className="md:col-span-2 w-full bg-zinc-900/20 border border-white/5 p-4 rounded-2xl text-zinc-400 text-sm cursor-not-allowed" />
+                                <div className="relative"><input type="text" placeholder="CEP *" value={formData.cep} onBlur={checkCep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
+                                <input type="text" placeholder="Cidade" value={formData.address_city} onChange={e => setFormData({...formData, address_city: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600 focus:border-[#E11D48]/50 outline-none transition-colors" />
+                                <input type="text" placeholder="Logradouro" value={formData.address_street} onChange={e => setFormData({...formData, address_street: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600 focus:border-[#E11D48]/50 outline-none transition-colors" />
                                 <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Acesso</div>
                                 <input type="email" placeholder="E-mail *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
                                 <input type="password" placeholder="Senha *" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
@@ -723,448 +751,3 @@ export default function App() {
       </div>
     );
   }
-
-  // 2. ADMIN VIEW
-  if (currentUser?.role === 'admin') {
-    return (
-      <div className="min-h-screen bg-[#09090b] text-zinc-100 pb-20">
-        <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
-        
-        <header className="sticky top-0 z-50 glass px-6 py-4 border-b border-white/5">
-          <div className="max-w-7xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3"><Logo /><h2 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Painel Jéssica</h2></div>
-              <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 bg-zinc-800 rounded-2xl text-zinc-400 hover:text-[#E11D48]"><LogOut size={20} /></button>
-            </div>
-            <div className="flex gap-2 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 relative overflow-hidden">
-              <motion.div 
-                className="absolute inset-y-1.5 bg-[#E11D48] rounded-xl" 
-                animate={{ 
-                  x: adminTab === 'products' ? '4px' 
-                     : adminTab === 'pending' ? 'calc(25% + 4px)' 
-                     : adminTab === 'history' ? 'calc(50% + 4px)' 
-                     : 'calc(75% + 4px)', 
-                  width: 'calc(25% - 8px)' 
-                }} 
-                transition={{ type: "spring", stiffness: 300, damping: 30 }} 
-              />
-              <button onClick={() => setAdminTab('products')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'products' ? 'text-white' : 'text-zinc-500'}`}><PlusCircle size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Produtos</span></button>
-              <button onClick={() => setAdminTab('pending')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'pending' ? 'text-white' : 'text-zinc-500'}`}><Hourglass size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Pendentes</span></button>
-              <button onClick={() => setAdminTab('history')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'history' ? 'text-white' : 'text-zinc-500'}`}><Package size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Histórico</span></button>
-              <button onClick={() => setAdminTab('users')} className={`relative z-10 flex-1 py-3 px-4 text-[10px] font-black uppercase tracking-wider transition-colors ${adminTab === 'users' ? 'text-white' : 'text-zinc-500'}`}><UsersIcon size={14} className="inline mr-2 md:mr-2" /><span className="hidden md:inline">Acessos</span></button>
-            </div>
-          </div>
-        </header>
-
-        <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
-          {adminTab === 'products' && (
-            <>
-              <section>
-                <h3 className="text-xl font-black uppercase tracking-tighter mb-6 flex items-center gap-2"><TrendingUp className="text-[#E11D48]" /> Performance Global</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40"><div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center mb-2"><LayoutGrid className="text-blue-500" size={20} /></div><div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Modelos Ativos</span><h4 className="text-3xl font-black text-white">{products.length}</h4></div></div>
-                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40"><div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-2"><DollarSign className="text-emerald-500" size={20} /></div><div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Receita Confirmada</span><h4 className="text-3xl font-black text-white">{formatCurrency(totalRevenue)}</h4></div></div>
-                  <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex flex-col justify-between h-40"><div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center mb-2"><TrendingUp className="text-rose-500" size={20} /></div><div><span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Rede Mais Ativa</span><h4 className="text-2xl font-black text-white">{mostActiveNetwork}</h4></div></div>
-                </div>
-              </section>
-
-              <section className="bg-zinc-900/20 border border-white/5 rounded-[40px] p-8 overflow-hidden relative">
-                <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><PlusCircle className="text-[#E11D48]" /> Gerenciar Catálogo</h2>
-                <form onSubmit={handleAddProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-                  <div className="lg:col-span-4 flex flex-col gap-2">
-                     <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest pl-1">Imagem do Produto</label>
-                     <div onClick={() => fileInputRef.current?.click()} className="aspect-[3/4] bg-zinc-950 border border-white/5 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48]/30 overflow-hidden relative group transition-all">
-                      {newProduct.image_url ? ( <img src={newProduct.image_url} className="absolute inset-0 w-full h-full object-cover" /> ) : ( <div className="text-zinc-700 text-center group-hover:text-zinc-500 transition-colors"><ImageIcon className="mx-auto mb-3 w-10 h-10 stroke-1" /><p className="text-[9px] font-black uppercase tracking-widest">Upload Imagem</p></div> )}
-                      <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setNewProduct({...newProduct, image_url: reader.result as string}); reader.readAsDataURL(file); } }} className="hidden" accept="image/*" />
-                    </div>
-                  </div>
-                  <div className="lg:col-span-8 space-y-6">
-                    <div>
-                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Nome do Uniforme</label>
-                        <input type="text" placeholder="Ex: Camiseta Polo Branca" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-                    </div>
-                    <div>
-                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Descrição Detalhada</label>
-                        <textarea rows={2} placeholder="Detalhes sobre tecido, gola, acabamento..." value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Preço Unitário (R$)</label>
-                            <input type="number" step="0.01" placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" required />
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Categoria / Estação</label>
-                            <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm"><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option><option value="Unissex">Unissex</option><option value="Inverno">Inverno</option></select>
-                        </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Pedido Mínimo (Un)</label>
-                            <input type="number" placeholder="10" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                        </div>
-                        <div>
-                             <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Prazo Produção (Dias)</label>
-                             <input type="number" placeholder="15" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white text-sm" />
-                        </div>
-                    </div>
-                    <div>
-                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-2 block pl-1">Tamanhos Disponíveis</label>
-                        <div className="flex gap-2">
-                             {['P', 'M', 'G', 'GG', 'XG', 'Único'].map(size => (
-                               <button type="button" key={size} onClick={() => { const sizes = newProduct.available_sizes.includes(size) ? newProduct.available_sizes.filter(s => s !== size) : [...newProduct.available_sizes, size]; setNewProduct({...newProduct, available_sizes: sizes}); }} className={`flex-1 border py-3 rounded-xl text-center text-xs font-bold ${newProduct.available_sizes.includes(size) ? 'bg-[#E11D48] border-[#E11D48] text-white' : 'bg-zinc-950 border-white/5 text-zinc-400'}`}>{size}</button>
-                             ))}
-                        </div>
-                    </div>
-                    <div className="space-y-3">
-                        <label className="text-[10px] font-black uppercase text-zinc-500 tracking-widest block pl-1">Disponibilidade / Rede</label>
-                        
-                        <label className={`flex items-center gap-3 p-4 border rounded-2xl cursor-pointer transition-all ${newProduct.network_tags.includes('*') ? 'bg-[#E11D48]/10 border-[#E11D48] shadow-lg shadow-rose-900/20' : 'bg-zinc-950 border-white/5 hover:border-[#E11D48]/30'}`}>
-                            <input type="checkbox" checked={newProduct.network_tags.includes('*')} onChange={(e) => { if (e.target.checked) { setNewProduct({...newProduct, network_tags: ['*']}); } else { setNewProduct({...newProduct, network_tags: []}); } }} className="w-5 h-5 accent-[#E11D48]" />
-                            <div className="flex-1">
-                                <p className={`text-sm font-black ${newProduct.network_tags.includes('*') ? 'text-[#E11D48]' : 'text-white'}`}>Todos os Clientes</p>
-                                <p className="text-[10px] text-zinc-500 uppercase font-bold">Produto visível em toda a plataforma</p>
-                            </div>
-                        </label>
-
-                        {!newProduct.network_tags.includes('*') && (
-                            <div className="space-y-2">
-                                 <div className="bg-zinc-950 border border-white/5 rounded-2xl overflow-hidden">
-                                    <div className="p-3 border-b border-white/5 bg-zinc-900/50">
-                                        <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Rede / Franquia</p>
-                                    </div>
-                                    <div className="p-2 max-h-60 overflow-y-auto space-y-1 custom-scrollbar">
-                                        {clientProfiles.length === 0 ? (
-                                            <p className="text-xs text-zinc-600 text-center py-6 italic">Nenhum cliente encontrado.</p>
-                                        ) : (
-                                            clientProfiles.map((profile) => (
-                                                <label key={profile.network_tag} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${newProduct.network_tags.includes(profile.network_tag) ? 'bg-[#E11D48]/5 border border-[#E11D48]/20' : 'hover:bg-zinc-900 border border-transparent'}`}>
-                                                    <input type="checkbox" checked={newProduct.network_tags.includes(profile.network_tag)} onChange={(e) => {
-                                                        if (e.target.checked) {
-                                                            setNewProduct({ ...newProduct, network_tags: [...newProduct.network_tags, profile.network_tag] });
-                                                        } else {
-                                                            setNewProduct({ ...newProduct, network_tags: newProduct.network_tags.filter(t => t !== profile.network_tag) });
-                                                        }
-                                                    }} className="w-4 h-4 accent-[#E11D48]" />
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className="text-xs font-bold text-white truncate">{profile.unit_name}</p>
-                                                        <p className="text-[9px] text-zinc-500 font-bold truncate">{profile.network_tag}</p>
-                                                    </div>
-                                                </label>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="bg-zinc-950 border border-white/5 rounded-2xl p-3">
-                                     <p className="text-[9px] font-black uppercase text-zinc-500 tracking-widest mb-2">Adicionar Manualmente</p>
-                                     <div className="flex gap-2">
-                                        <input 
-                                            type="text" 
-                                            placeholder="Ex: nova-rede" 
-                                            className="flex-1 bg-zinc-900/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-[#E11D48] outline-none"
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.preventDefault();
-                                                    const val = e.currentTarget.value.trim();
-                                                    if (val && !newProduct.network_tags.includes(val)) {
-                                                        setNewProduct({...newProduct, network_tags: [...newProduct.network_tags, val]});
-                                                        e.currentTarget.value = '';
-                                                    }
-                                                }
-                                            }}
-                                        />
-                                     </div>
-                                     <div className="flex flex-wrap gap-2 mt-3">
-                                        {newProduct.network_tags.filter(t => t !== '*' && !clientProfiles.some(p => p.network_tag === t)).map(tag => (
-                                            <span key={tag} className="bg-zinc-800 border border-white/10 px-3 py-1 rounded-lg text-[10px] text-white flex items-center gap-2">
-                                                {tag}
-                                                <button type="button" onClick={() => setNewProduct({...newProduct, network_tags: newProduct.network_tags.filter(t => t !== tag)})} className="hover:text-[#E11D48]"><X size={12}/></button>
-                                            </span>
-                                        ))}
-                                     </div>
-                                </div>
-                            </div>
-                        )}
-                        {newProduct.network_tags.length > 0 && !newProduct.network_tags.includes('*') && <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider text-center">✓ {newProduct.network_tags.length} {newProduct.network_tags.length === 1 ? 'rede selecionada' : 'redes selecionadas'}</p>}
-                    </div>
-                    <button type="submit" className="w-full bg-[#E11D48] hover:bg-[#be123c] py-5 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-rose-600/20 mt-4 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> {editingId ? 'Salvar' : 'Publicar'}</button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {products.map(p => (
-                    <div key={p.id} className="bg-zinc-900/30 p-4 rounded-[32px] border border-white/5 flex items-center gap-4 group hover:border-[#E11D48]/30 transition-all">
-                      <img src={p.image_url} className="w-16 h-16 rounded-xl object-cover bg-zinc-950" />
-                      <div className="flex-1 min-w-0">
-                        <h4 className="text-[10px] font-bold text-white truncate uppercase mb-1">{p.name}</h4>
-                        <p className="text-[9px] font-bold text-zinc-500 uppercase">{p.network_tag}</p>
-                        <div className="flex gap-2 mt-2">
-                          <button onClick={() => { 
-                              setEditingId(p.id); 
-                              setNewProduct({ 
-                                  name: p.name,
-                                  price: p.price.toString(), 
-                                  image_url: p.image_url,
-                                  network_tags: [p.network_tag],
-                                  category: p.category,
-                                  description: p.description || '', 
-                                  min_order: p.min_order.toString(), 
-                                  production_days: p.production_days.toString(), 
-                                  available_sizes: p.available_sizes || []
-                              }); 
-                              window.scrollTo({ top: 800, behavior: 'smooth' }); 
-                          }} className="text-xs text-zinc-400 hover:text-white">Editar</button>
-                          <button onClick={() => { if(confirm("Excluir?")) { supabase.from('products').delete().eq('id', p.id).then(() => setProducts(products.filter(pr => pr.id !== p.id))); } }} className="text-xs text-rose-500 hover:text-rose-400">Excluir</button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-              </section>
-            </>
-          )}
-
-          {adminTab === 'pending' && (
-            <section className="space-y-6">
-               <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3"><Package className="text-[#E11D48]" /> Pedidos Pendentes de Validação</h2>
-               </div>
-               <OrdersManagement />
-            </section>
-          )}
-
-          {adminTab === 'history' && <OrdersHistory />}
-
-          {adminTab === 'users' && (
-            <section className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3"><UsersIcon className="text-[#E11D48]" /> Controle de Acessos</h2>
-              </div>
-              <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-8">
-                 {loadingUsers ? (
-                     <div className="text-center py-12 text-zinc-600">
-                        <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" />
-                        <p className="text-xs uppercase font-black tracking-widest">Carregando usuários...</p>
-                     </div>
-                 ) : usersList.length === 0 ? (
-                    <div className="text-center py-12">
-                       <UsersIcon className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
-                       <p className="text-zinc-600 uppercase font-black text-xs">Nenhum usuário encontrado</p>
-                    </div>
-                 ) : (
-                    <div className="grid grid-cols-1 gap-4">
-                      {usersList.map((user) => (
-                        <div key={user.id} className="bg-zinc-950/40 border border-white/5 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-white/10 transition-colors">
-                           <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 rounded-xl bg-[#E11D48]/10 flex items-center justify-center text-[#E11D48] font-black text-lg">
-                                {user.unit_name ? user.unit_name.charAt(0).toUpperCase() : 'U'}
-                              </div>
-                              <div>
-                                 <h4 className="text-sm font-black text-white">{user.unit_name || 'Sem nome'}</h4>
-                                 <div className="flex flex-wrap gap-2 mt-1">
-                                    <span className="text-[9px] font-bold text-zinc-500 uppercase bg-zinc-900 px-2 py-0.5 rounded border border-white/5">{user.network_tag || 'Sem rede'}</span>
-                                    <span className="text-[9px] font-bold text-zinc-500 uppercase bg-zinc-900 px-2 py-0.5 rounded border border-white/5">{user.email}</span>
-                                 </div>
-                              </div>
-                           </div>
-                           <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
-                              <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${user.role === 'admin' ? 'bg-[#E11D48]/10 text-[#E11D48]' : 'bg-emerald-500/10 text-emerald-500'}`}>
-                                {user.role === 'admin' ? 'Gestor' : 'Franqueado'}
-                              </span>
-                              <button 
-                                onClick={() => handleDeleteUser(user.id)}
-                                className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-500 hover:bg-rose-600/10 hover:text-rose-500 transition-colors"
-                                title="Excluir Usuário"
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                           </div>
-                        </div>
-                      ))}
-                    </div>
-                 )}
-              </div>
-            </section>
-          )}
-
-        </main>
-      </div>
-    );
-  }
-
-  // 3. CLIENT VIEW (FRANQUEADO)
-  return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100">
-      <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
-      <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between border-b border-white/5">
-        <div className="flex items-center gap-4">
-          <Logo />
-          <div className="hidden md:flex bg-zinc-900/50 border border-white/5 rounded-full px-4 py-2 items-center gap-2">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-            <span className="font-bold text-zinc-100 text-xs">{currentUser?.network_tag.replace('-', ' ').toUpperCase()}</span>
-            <span className="text-zinc-600 text-[10px] font-black">/</span>
-            <span className="font-bold text-zinc-100 text-xs">{currentUser?.unit_name}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-3 text-zinc-500 relative hover:text-white transition-colors">
-            <Bell size={20} />
-            <span className="absolute top-3 right-3 w-2 h-2 bg-rose-500 rounded-full animate-pulse shadow-rose-500/50" />
-            <AnimatePresence>
-              {isNotificationsOpen && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute top-full right-0 mt-2 w-64 bg-zinc-950 border border-white/10 rounded-2xl shadow-2xl p-4 z-50">
-                   <h4 className="text-[10px] font-black uppercase text-zinc-500 mb-3 tracking-widest">Notificações</h4>
-                   <div className="space-y-3">{orders.length > 0 ? (<div className="flex gap-3"><div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500"><CheckCircle2 size={14} /></div><div><p className="text-xs font-bold text-white">Última compra</p><p className="text-[10px] text-zinc-500">{orders[0].status}</p></div></div>) : <p className="text-xs text-zinc-600">Nada recente.</p>}</div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </button>
-          <button onClick={() => setIsHistoryOpen(true)} className="p-3 text-zinc-500 hover:text-white transition-colors"><List size={20} /></button>
-          <button onClick={() => setIsCartOpen(true)} className="relative p-3 bg-zinc-900/50 rounded-2xl border border-white/5 hover:border-[#E11D48]/50 transition-colors"><ShoppingCart size={20} />{cart.length > 0 && <span className="absolute -top-1 -right-1 bg-[#E11D48] text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-black shadow-lg shadow-rose-600/50">{cart.length}</span>}</button>
-          <button onClick={() => { supabase.auth.signOut(); setCurrentUser(null); }} className="p-3 text-zinc-500 hover:text-rose-500"><LogOut size={20} /></button>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-6 py-12">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-          <div><h1 className="text-4xl font-black tracking-tighter uppercase mb-2">Catálogo Oficial</h1><p className="text-zinc-500 font-bold uppercase text-[10px] tracking-[0.2em]">Selecione os uniformes para sua unidade</p></div>
-        </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-          {products.filter(p => {
-             // CORREÇÃO: Garante string vazia se nulo antes de toLowerCase
-             const pTag = (p.network_tag || '').toLowerCase().trim();
-             const uTag = (currentUser?.network_tag || '').toLowerCase().trim();
-             return pTag === uTag;
-          }).map(p => {
-             const selectedSize = clientSelectedSizes[p.id] || (p.available_sizes && p.available_sizes.length > 0 ? p.available_sizes[0] : 'Único');
-             return (
-              <div key={p.id} className="bg-zinc-900/40 border border-white/5 rounded-[32px] overflow-hidden flex flex-col group shadow-2xl hover:border-[#E11D48]/30 transition-all">
-                <div className="aspect-square bg-zinc-950 overflow-hidden relative">
-                  <img src={p.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="" />
-                  <div className="absolute top-4 right-4"><span className="bg-black/60 backdrop-blur-md text-white text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/10 flex items-center gap-1"><Tag size={10} className="text-[#E11D48]" /> {p.category}</span></div>
-                </div>
-                <div className="p-6 flex-1 flex flex-col">
-                  <h3 className="text-base font-bold text-white mb-1 line-clamp-1">{p.name}</h3>
-                  <p className="text-xl font-black text-[#E11D48]">R$ {p.price.toFixed(2)}</p>
-                  <div className="mt-4"><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tamanho:</p><div className="flex flex-wrap gap-2">{p.available_sizes && p.available_sizes.length > 0 ? ( p.available_sizes.map(size => ( <button key={size} onClick={() => setClientSelectedSizes(prev => ({...prev, [p.id]: size as Size}))} className={`min-w-[32px] h-8 px-2 rounded-lg text-[10px] font-black transition-all border ${selectedSize === size ? 'bg-[#E11D48] border-[#E11D48] text-white shadow-lg shadow-rose-600/20' : 'bg-zinc-950 border-white/10 text-zinc-400 hover:border-white/30'}`}>{size}</button> )) ) : ( <span className="text-[10px] text-zinc-600 font-bold uppercase">Único</span> )}</div></div>
-                  <button onClick={() => { setCart([...cart, { ...p, selectedSize: selectedSize as Size, quantity: p.min_order }]); showToast(`Adicionado: ${selectedSize}`); }} className="mt-6 w-full font-black py-4 rounded-2xl bg-white text-zinc-950 uppercase text-[10px] tracking-widest hover:bg-[#E11D48] hover:text-white transition-all shadow-lg hover:shadow-rose-900/20">Comprar ({p.min_order} un)</button>
-                </div>
-              </div>
-             );
-          })}
-        </div>
-
-        {/* HISTÓRICO DE PEDIDOS DO CLIENTE */}
-        <section className="mt-16">
-          <h2 className="text-2xl font-black uppercase tracking-tighter mb-8">Meus Pedidos</h2>
-          <ClientOrderHistory userId={currentUser.id} />
-        </section>
-
-      </main>
-
-      <button onClick={() => window.open(`https://wa.me/551732167854`, '_blank')} className="fixed bottom-8 right-8 w-16 h-16 bg-[#25D366] text-white rounded-full shadow-2xl flex items-center justify-center z-[90] hover:scale-110 transition-transform shadow-emerald-500/20"><MessageCircle size={32} /></button>
-
-      {/* CART SIDEBAR */}
-      <AnimatePresence>
-        {isCartOpen && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md" onClick={() => setIsCartOpen(false)} />
-            <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} className="fixed right-0 top-0 bottom-0 z-[110] w-full max-w-md glass flex flex-col border-l border-white/10 shadow-2xl">
-              <div className="p-8 border-b border-white/5 flex items-center justify-between"><h2 className="text-2xl font-black uppercase tracking-tighter">Minha Lista</h2><button onClick={() => setIsCartOpen(false)}><X size={24} /></button></div>
-              <div className="flex-1 p-8 space-y-6 overflow-y-auto">
-                {cart.length === 0 ? <p className="text-center py-20 uppercase font-black text-[10px] text-zinc-600 tracking-widest">Nenhum item</p> : cart.map((item, i) => (
-                  <div key={i} className="flex gap-4 p-4 bg-zinc-950/40 rounded-3xl border border-white/5">
-                    <img src={item.image_url} className="w-16 h-16 object-cover rounded-xl" />
-                    <div className="flex-1"><h4 className="text-[10px] font-bold text-white uppercase mb-1">{item.name}</h4><p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Tam: {item.selectedSize}</p><div className="flex items-center gap-3"><button onClick={() => { const newCart = [...cart]; newCart[i].quantity > newCart[i].min_order ? newCart[i].quantity-- : newCart.splice(i, 1); setCart(newCart); }} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Minus size={12}/></button><span className="text-sm font-black text-[#E11D48]">{item.quantity}</span><button onClick={() => { const newCart = [...cart]; newCart[i].quantity++; setCart(newCart); }} className="w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"><Plus size={12}/></button></div></div>
-                    <button onClick={() => setCart(cart.filter((_, idx) => idx !== i))} className="text-zinc-600 hover:text-rose-500 self-start"><X size={16}/></button>
-                  </div>
-                ))}
-              </div>
-              {cart.length > 0 && (
-                <div className="p-8 border-t border-white/5 bg-zinc-950/80 space-y-4">
-                  <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5 space-y-3">
-                    <label className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block">Frete (CEP)</label>
-                    <div className="flex gap-2"><input type="text" value={cep} onChange={(e) => setCep(e.target.value.replace(/\D/g, '').slice(0, 8))} placeholder="00000-000" className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#E11D48]/50 outline-none" /><button onClick={calculateShipping} disabled={isCalculatingShipping} className="bg-[#E11D48] px-4 rounded-xl text-white font-bold text-xs hover:bg-[#be123c] disabled:opacity-50">{isCalculatingShipping ? <Loader2 className="animate-spin" size={14}/> : 'OK'}</button></div>
-                    {shippingAddress && <div className="flex items-center gap-2 text-emerald-500 text-[10px] font-bold uppercase tracking-wider"><MapPin size={10} /><span>{shippingAddress.localidade}/{shippingAddress.uf}</span></div>}
-                  </div>
-                  <div className="space-y-2"><div className="flex justify-between items-center px-2 border-t border-white/5 pt-2"><span className="text-[10px] font-black uppercase text-white">Total</span><span className="text-xl font-black text-[#E11D48]">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</span></div></div>
-                  <div className="grid grid-cols-1 gap-3">
-                    <button onClick={() => { if(shippingCost === null) { showToast("Calcule o frete", "error"); return; } setIsCartOpen(false); setIsPaymentOpen(true); }} className="bg-[#E11D48] text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 tracking-widest hover:bg-[#be123c] transition-colors"><QrCode size={14}/> PAGAR PIX</button>
-                    <button onClick={handleManualWhatsapp} className="border border-white/10 text-zinc-400 hover:text-white py-4 rounded-2xl font-black uppercase text-[9px] flex items-center justify-center gap-2 tracking-widest hover:bg-white/5 transition-colors"> Orçamento / Dúvidas via WhatsApp</button>
-                  </div>
-                </div>
-              )}
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* PAGAMENTO PIX */}
-      <AnimatePresence>
-        {isPaymentOpen && (
-           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[150] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
-               <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-sm w-full relative shadow-2xl flex flex-col overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#E11D48] to-transparent" />
-                  <div className="p-8 text-center border-b border-white/5"><div className="w-16 h-16 bg-[#E11D48]/10 rounded-full flex items-center justify-center mx-auto mb-4"><QrCode className="text-[#E11D48]" size={32} /></div><h2 className="text-xl font-black text-white uppercase tracking-tighter mb-1">Pagamento Pix</h2></div>
-                  <div className="p-8 bg-white flex flex-col items-center justify-center gap-4"><div className="bg-white p-2 rounded-xl border-4 border-zinc-100"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getPixCode())}`} className="w-48 h-48 mix-blend-multiply" /></div><p className="text-zinc-950 font-black text-2xl">R$ {(cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0)).toFixed(2)}</p></div>
-                  <div className="p-6 bg-zinc-900/50 border-t border-white/5 space-y-4">
-                     <div className="flex gap-2"><input type="text" readOnly value={getPixCode()} className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 text-[10px] text-zinc-400 font-mono outline-none" /><button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Copiado!", "success"); }} className="bg-zinc-800 hover:bg-zinc-700 text-white p-3 rounded-xl transition-colors"><Copy size={16} /></button></div>
-                     <button onClick={handleFinalizePix} className="w-full bg-[#E11D48] hover:bg-[#be123c] text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-600/20 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={16} /> Já fiz o Pix (Finalizar)</button>
-                     <button onClick={handleManualWhatsapp} className="w-full text-zinc-400 hover:text-emerald-400 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"><MessageCircle size={14}/> Problemas? Pagar no WhatsApp</button>
-                     <button onClick={() => setIsPaymentOpen(false)} className="w-full text-zinc-600 hover:text-white py-2 text-[10px] font-bold uppercase tracking-widest transition-colors">Cancelar</button>
-                  </div>
-               </motion.div>
-           </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* SUCESSO PEDIDO */}
-      <AnimatePresence>
-        {isOrderSuccessOpen && (
-           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6">
-              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className={`bg-zinc-950 border ${orderError ? 'border-amber-500/20 shadow-amber-900/20' : 'border-[#E11D48]/20 shadow-rose-900/20'} rounded-[40px] max-w-sm w-full p-10 text-center relative shadow-2xl`}>
-                 <div className={`w-24 h-24 ${orderError ? 'bg-amber-500' : 'bg-[#E11D48]'} rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl ${orderError ? 'shadow-amber-500/30' : 'shadow-rose-500/30'}`}>
-                    {orderError ? <AlertTriangle className="text-white" size={48} /> : <CheckCircle2 className="text-white" size={48} />}
-                 </div>
-                 
-                 <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">
-                    {orderError ? 'Erro de Sincronização' : 'Pedido Registrado!'}
-                 </h2>
-                 
-                 <p className="text-zinc-400 text-sm mb-8">
-                    {orderError 
-                      ? 'Não conseguimos salvar no histórico automático devido a uma falha de conexão. Por favor, finalize enviando o comprovante manualmente.' 
-                      : 'Seu pedido foi salvo no sistema como Pendente. O envio será iniciado assim que o gestor confirmar o pagamento.'}
-                 </p>
-                 
-                 <button onClick={() => { if(whatsappLink) window.open(whatsappLink, '_blank'); setIsOrderSuccessOpen(false); }} className="w-full bg-[#25D366] hover:bg-[#1da851] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-3"><Send size={18} /> {whatsappLink ? 'ENVIAR COMPROVANTE WHATSAPP' : 'FECHAR'}</button>
-                 <button onClick={() => setIsOrderSuccessOpen(false)} className="mt-6 text-zinc-600 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors">Fechar</button>
-              </motion.div>
-           </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* HISTORICO ANTIGO (MODAL - MANTIDO POR PRECAUÇÃO MAS REDUNDANTE COM A SEÇÃO NOVA) */}
-      <AnimatePresence>
-        {isHistoryOpen && (
-           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6">
-               <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-2xl w-full max-h-[80vh] flex flex-col relative shadow-2xl">
-                  <div className="p-8 border-b border-white/5 flex items-center justify-between"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center"><History className="text-[#E11D48]" size={24} /></div><h2 className="text-2xl font-black text-white uppercase tracking-tighter">Meu Histórico</h2></div><button onClick={() => setIsHistoryOpen(false)} className="text-zinc-500 hover:text-white"><X size={24}/></button></div>
-                  <div className="flex-1 overflow-y-auto p-8 space-y-4">
-                     {orders.map(order => (
-                        <div key={order.id} className="bg-zinc-900/40 border border-white/5 p-6 rounded-3xl">
-                           <div className="flex justify-between items-start mb-6"><div><p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">ID</p><p className="text-sm font-bold text-white">#{order.id.slice(0, 8).toUpperCase()}</p></div><div className="text-right"><p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">Data</p><p className="text-sm font-bold text-white">{new Date(order.created_at).toLocaleDateString('pt-BR')}</p></div></div>
-                           <div className="space-y-3 mb-6">{(order.items as any[]).map((item: any, idx: number) => (<div key={idx} className="flex justify-between items-center text-sm"><span className="font-medium text-zinc-300"><span className="font-bold text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded text-[10px] mr-2">{item.quantity}x</span> {item.name} ({item.selectedSize})</span><span className="text-zinc-400">R$ {(item.price * item.quantity).toFixed(2)}</span></div>))}</div>
-                           <div className="flex items-center justify-between pt-6 border-t border-white/5"><span className={`border px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 ${order.status === 'Pago/Em Produção' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>{order.status}</span><span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</span></div>
-                        </div>
-                     ))}
-                  </div>
-                  <div className="p-8 border-t border-white/5"><button onClick={() => setIsHistoryOpen(false)} className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-zinc-800 transition-colors">Voltar</button></div>
-               </motion.div>
-           </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
