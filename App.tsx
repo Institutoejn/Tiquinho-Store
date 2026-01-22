@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, Hourglass, Loader2, 
-  UserPlus, LogIn, ShieldCheck, TrendingUp, DollarSign, Package, PlusCircle, 
-  Trash2, Image as ImageIcon, MessageCircle, QrCode, Bell, LayoutGrid, List,
-  Minus, Copy, History, ChevronRight, Calendar, Truck, MapPin, Tag, ChevronDown,
-  Building2, Phone, User, Mail, Lock, Search, Send, Check, AlertTriangle, Users as UsersIcon,
-  Factory, CheckCheck
+  ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, Loader2, 
+  ShieldCheck, Package, Trash2, Image as ImageIcon, QrCode, Minus, Copy, 
+  Search, Factory, CheckCheck, Users as UsersIcon, Bell, Menu, ChevronRight,
+  LayoutGrid, List, History, Wallet, TrendingUp, PlusCircle, Tag, Check, ChevronDown, Clock, MessageCircle, Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from './types';
@@ -30,15 +28,24 @@ class PixPayload {
   private normalizeString(str: string, limit: number): string {
     return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 ]/g, "").toUpperCase().substring(0, limit).trim();
   }
-  private formatField(id: string, value: string): string { const len = value.length.toString().padStart(2, '0'); return `${id}${len}${value}`; }
+  
+  private formatField(id: string, value: string): string { 
+    const len = value.length.toString().padStart(2, '0'); 
+    return `${id}${len}${value}`; 
+  }
+  
   private getCRC16(payload: string): string {
     let crc = 0xFFFF;
     for (let i = 0; i < payload.length; i++) {
       crc ^= payload.charCodeAt(i) << 8;
-      for (let j = 0; j < 8; j++) { if ((crc & 0x8000) !== 0) crc = ((crc << 1) ^ 0x1021) & 0xFFFF; else crc = (crc << 1) & 0xFFFF; }
+      for (let j = 0; j < 8; j++) { 
+        if ((crc & 0x8000) !== 0) crc = ((crc << 1) ^ 0x1021) & 0xFFFF; 
+        else crc = (crc << 1) & 0xFFFF; 
+      }
     }
     return (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
   }
+  
   public generate(): string {
     const payload = [
       this.formatField('00', '01'),
@@ -51,7 +58,7 @@ class PixPayload {
   }
 }
 
-// --- INTERFACES ---
+// --- TYPES LOCAL ---
 interface OrderDB {
   id: string;
   user_id: string;
@@ -63,7 +70,6 @@ interface OrderDB {
   created_at: string;
   payment_method?: string;
   user_email?: string;
-  total_amount?: number;
   validated_at?: string;
   validated_by?: string;
 }
@@ -78,7 +84,7 @@ const Logo = ({ className = "w-10 h-10" }: { className?: string }) => (
 const Spinner = () => (
   <div className="fixed inset-0 z-[300] bg-[#09090b] flex flex-col items-center justify-center">
     <div className="w-16 h-16 border-4 border-[#E11D48]/20 border-t-[#E11D48] rounded-full animate-spin"></div>
-    <p className="mt-6 text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Sincronizando</p>
+    <p className="mt-6 text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Carregando</p>
   </div>
 );
 
@@ -98,181 +104,125 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authFlow, setAuthFlow] = useState<'initial' | 'admin' | 'client'>('initial');
+  
+  // Admin Tabs
   const [adminTab, setAdminTab] = useState<'products' | 'pending' | 'history' | 'users'>('products');
   
-  const [formData, setFormData] = useState({ 
-    email: '', password: '', unit_name: '', network_tag: '', role: 'user' as 'user' | 'admin', 
-    adminKey: '', cnpj: '', phone: '', contact_name: '', cep: '', address_street: '', address_city: '', address_state: ''
-  });
-  const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false);
+  // Admin Filters
+  const [historyFilter, setHistoryFilter] = useState('TODOS');
+  const [productFilter, setProductFilter] = useState('TODOS'); // New filter for product catalog
+  const [expandedHistoryOrder, setExpandedHistoryOrder] = useState<string | null>(null);
 
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [isCartOpen, setIsCartOpen] = useState(false);
-  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
-  const [orderError, setOrderError] = useState(false);
-  const [whatsappLink, setWhatsappLink] = useState('');
-  
-  const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
-  const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
-  const [clientProfiles, setClientProfiles] = useState<Array<{network_tag: string, unit_name: string, email: string}>>([]);
-  
-  const [usersList, setUsersList] = useState<any[]>([]); 
-  const [loadingUsers, setLoadingUsers] = useState(false);
-
-  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Shipping
-  const [cep, setCep] = useState('');
-  const [shippingCost, setShippingCost] = useState<number | null>(null);
-  const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
-  const [shippingAddress, setShippingAddress] = useState<{logradouro: string, localidade: string, uf: string} | null>(null);
-  
   // Data
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<OrderDB[]>([]);
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [clientProfiles, setClientProfiles] = useState<Array<{id: string, network_tag: string, unit_name: string, email: string}>>([]);
+  const [availableNetworks, setAvailableNetworks] = useState<string[]>([]);
   
-  // Admin Form
+  // Forms & UI
+  const [isLoading, setIsLoading] = useState(true);
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [formData, setFormData] = useState({ 
+    email: '', password: '', unit_name: '', network_tag: '', role: 'user' as 'user' | 'admin', 
+    adminKey: '', cnpj: '', phone: '', contact_name: '', cep: '', 
+    address_street: '', address_city: '', address_state: ''
+  });
+  const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false);
+  
+  // Admin Product Form
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newProduct, setNewProduct] = useState({ 
-    name: '', price: '', image_url: '', network_tags: [] as string[], 
+    name: '', price: '', image_url: '', additional_images: [] as string[], network_tags: [] as string[], 
     category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] as string[]
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const extraFileRef1 = useRef<HTMLInputElement>(null);
+  const extraFileRef2 = useRef<HTMLInputElement>(null);
+  const extraFileRef3 = useRef<HTMLInputElement>(null);
+  
+  const SIZES_OPTIONS = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'G1', 'G2', 'Único'];
 
-  // --- AUTH & INIT ---
+  // Client Cart & Checkout
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
+  const [clientSelectedSizes, setClientSelectedSizes] = useState<Record<string, Size>>({});
+  const [detailsModalOpenId, setDetailsModalOpenId] = useState<string | null>(null);
+  const [activeModalImage, setActiveModalImage] = useState<string | null>(null);
+  
+  // New Client Features (Notifications, History, Whatsapp)
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  
+  // Shipping
+  const [cep, setCep] = useState('');
+  const [shippingCost, setShippingCost] = useState<number | null>(null);
+  const [shippingAddress, setShippingAddress] = useState<{logradouro: string, localidade: string, uf: string} | null>(null);
+
+  // --- INIT ---
   useEffect(() => {
-    let mounted = true;
     const initAuth = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (session) {
-          const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
-          if (profile) {
-            const user: UserType = { id: session.user.id, email: session.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role };
-            if (mounted) { setCurrentUser(user); localStorage.setItem('tiquinho_session', JSON.stringify(user)); }
-          } else { if (mounted) setCurrentUser(null); await supabase.auth.signOut(); }
-        }
-      } catch (err) { console.error(err); if (mounted) setCurrentUser(null); } 
-      finally { if (mounted) setIsLoading(false); }
-    };
-    initAuth();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-       if (!session && mounted) { setCurrentUser(null); localStorage.removeItem('tiquinho_session'); }
-    });
-    return () => { mounted = false; subscription.unsubscribe(); };
-  }, []);
-
-  // --- DATA SYNC ---
-  const fetchInitialData = async () => {
-    if (!currentUser) return;
-    try {
-      const { data: prodData } = await supabase.from('products').select('*').order('name');
-      if (prodData) setProducts(prodData.sort((a, b) => a.name.localeCompare(b.name)));
-
-      let orderQuery = supabase.from('orders').select('*').order('created_at', { ascending: false });
-      if (currentUser.role !== 'admin') orderQuery = orderQuery.eq('user_id', currentUser.id);
-      const { data: orderData } = await orderQuery;
-      if (orderData) setOrders(orderData);
-
-      if (currentUser.role === 'admin') {
-        try {
-            const { data: profs } = await supabase
-                .from('users')
-                .select('network_tag, unit_name, email')
-                .neq('role', 'admin')
-                .order('network_tag');
-            
-            if (profs) {
-                const groupedMap = new Map<string, {network_tag: string, unit_name: string, email: string}>();
-                profs.forEach(p => {
-                    if (p.network_tag && !groupedMap.has(p.network_tag)) {
-                        groupedMap.set(p.network_tag, p);
-                    }
-                });
-                const grouped = Array.from(groupedMap.values());
-                setClientProfiles(grouped);
-                setAvailableNetworks(grouped.map(p => p.network_tag));
-            }
-        } catch (error) {
-            console.error("Erro ao buscar perfis:", error);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
+        if (profile) {
+          setCurrentUser({ id: session.user.id, email: session.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
         }
       }
-    } catch (err) { console.error(err); }
-  };
+      setIsLoading(false);
+    };
+    initAuth();
+  }, []);
 
-  useEffect(() => { if(currentUser) fetchInitialData(); }, [currentUser]);
+  const fetchInitialData = async () => {
+    if (!currentUser) return;
+    
+    // Products
+    const { data: prodData } = await supabase.from('products').select('*').order('name');
+    if (prodData) setProducts(prodData);
 
-  const fetchUsers = async () => {
-    if (currentUser?.role !== 'admin') return;
-    setLoadingUsers(true);
-    try {
-      const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: false });
-      if (error) throw error;
-      setUsersList(data || []);
-    } catch (error) {
-      console.error("Erro ao buscar usuários:", error);
-      showToast("Erro ao carregar usuários", "error");
-    } finally {
-      setLoadingUsers(false);
+    // Orders
+    let orderQuery = supabase.from('orders').select('*').order('created_at', { ascending: false });
+    if (currentUser.role !== 'admin') orderQuery = orderQuery.eq('user_id', currentUser.id);
+    const { data: orderData } = await orderQuery;
+    if (orderData) setOrders(orderData);
+
+    // Admin specific data
+    if (currentUser.role === 'admin') {
+      const { data: users } = await supabase.from('users').select('*').order('created_at', { ascending: false });
+      if (users) {
+        setUsersList(users);
+        const profs = users.filter(u => u.role !== 'admin');
+        setClientProfiles(profs);
+        setAvailableNetworks([...new Set(profs.map(u => u.network_tag))] as string[]);
+      }
     }
   };
 
-  useEffect(() => {
-    if (adminTab === 'users') {
-      fetchUsers();
-    }
+  useEffect(() => { if (currentUser) fetchInitialData(); }, [currentUser]);
+  
+  // Update users list when tab changes
+  useEffect(() => { 
+      if (currentUser?.role === 'admin' && adminTab === 'users') {
+          fetchInitialData(); 
+      }
   }, [adminTab]);
 
-  const handleDeleteUser = async (userId: string) => {
-    if (userId === currentUser?.id) {
-        showToast("Você não pode excluir seu próprio usuário.", "error");
-        return;
-    }
-    const confirmed = window.confirm("Deseja realmente excluir este acesso? Esta ação é permanente no banco de dados");
-    if (!confirmed) return;
-    try {
-      const { error } = await supabase.from('users').delete().eq('id', userId);
-      if (error) throw error;
-      showToast("Acesso excluído com sucesso!");
-      setUsersList(prev => prev.filter(user => user.id !== userId));
-      fetchInitialData(); 
-    } catch (error) {
-      console.error("Erro ao excluir usuário:", error);
-      showToast("Erro ao excluir usuário", "error");
-    }
-  };
-
-  useEffect(() => {
-    if (!currentUser) return;
-    const ch = supabase.channel('app_db')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchInitialData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchInitialData)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [currentUser]);
-
-  // --- LOGIC ---
+  // --- ACTIONS ---
   const showToast = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
   const calculateShipping = async () => {
     if (cep.length !== 8) return showToast("CEP inválido", "error");
-    setIsCalculatingShipping(true);
     try {
       const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
       const data = await res.json();
       if (data.erro) throw new Error();
-      let cost = data.uf === 'SP' ? 25.90 : 78.50;
-      setShippingCost(cost);
-      setShippingAddress({ logradouro: data.logradouro, localidade: data.localidade, uf: data.uf });
-      showToast("Frete calculado!", "success");
-    } catch { showToast("Erro no CEP", "error"); setShippingCost(null); }
-    finally { setIsCalculatingShipping(false); }
+      setShippingCost(data.uf === 'SP' ? 25.90 : 78.50);
+      setShippingAddress(data);
+    } catch { showToast("Erro no CEP", "error"); }
   };
 
   const getPixCode = () => {
@@ -280,474 +230,1153 @@ export default function App() {
     return new PixPayload('53424027000178', 'TIQUINHO UNIFORMES', 'SAO JOSE RIO PRETO', total, `PED${Date.now().toString().slice(-4)}`).generate();
   };
 
-  // --- ACTIONS ---
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault(); setIsLoading(true);
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email.trim(), password: formData.password });
-      if (error) throw error;
-      const { data: profile } = await supabase.from('users').select('*').eq('id', data.user.id).single();
-      if (!profile) throw new Error("Perfil não encontrado. Contate o suporte.");
-      setCurrentUser({ id: data.user.id, email: data.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
-    } catch (err: any) { showToast(err.message, "error"); }
-    finally { setIsLoading(false); }
+  const handleWhatsAppQuote = () => {
+      const total = cart.reduce((a,b)=>a+b.price*b.quantity,0) + (shippingCost || 0);
+      let message = `*SOLICITAÇÃO DE ORÇAMENTO*\n`;
+      message += `*Cliente:* ${currentUser?.unit_name}\n`;
+      message += `*Rede:* ${currentUser?.network_tag}\n\n`;
+      message += `*ITENS DO PEDIDO:*\n`;
+      
+      cart.forEach(item => {
+          message += `• ${item.quantity}x ${item.name} (Tam: ${item.selectedSize}) - ${formatCurrency(item.price)}\n`;
+      });
+      
+      if(shippingCost) {
+          message += `\n*Frete:* ${formatCurrency(shippingCost)} (CEP: ${cep})\n`;
+      }
+      
+      message += `\n*TOTAL APROXIMADO:* ${formatCurrency(total)}`;
+      
+      const url = `https://wa.me/551732167854?text=${encodeURIComponent(message)}`;
+      window.open(url, '_blank');
   };
 
   const checkCep = async () => {
     if (formData.cep.length !== 8) return;
-    setIsLoading(true);
     try {
         const res = await fetch(`https://viacep.com.br/ws/${formData.cep}/json/`);
         const data = await res.json();
         if (!data.erro) {
-            setFormData(prev => ({
-                ...prev,
-                address_street: data.logradouro || prev.address_street,
-                address_city: data.localidade || prev.address_city,
-                address_state: data.uf || prev.address_state
-            }));
+            setFormData(prev => ({ ...prev, address_street: data.logradouro || '', address_city: data.localidade || '', address_state: data.uf || '' }));
         }
-    } catch (error) {
-        console.error("Erro ao buscar CEP", error);
-    } finally {
-        setIsLoading(false);
-    }
+    } catch (e) { console.error(e); }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault(); setIsLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email, password: formData.password });
+      if (error) throw error;
+      const { data: profile } = await supabase.from('users').select('*').eq('id', data.user.id).single();
+      setCurrentUser({ id: data.user.id, email: data.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
+    } catch (err: any) { showToast(err.message, "error"); } finally { setIsLoading(false); }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault(); setIsLoading(true);
     if (authFlow === 'admin' && formData.adminKey !== 'TIQUINHO2026') { setIsLoading(false); return showToast("Chave inválida", "error"); }
-    
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: formData.email.trim(), password: formData.password,
-        options: {
-          data: {
-            unit_name: formData.unit_name,
-            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag.trim(),
-            role: authFlow === 'admin' ? 'admin' : 'user',
-            cnpj: formData.cnpj, phone: formData.phone, contact_name: formData.contact_name,
-            address: `${formData.address_street}, ${formData.address_city}-${formData.address_state}`
-          }
-        }
-      });
+      const { data, error } = await supabase.auth.signUp({ email: formData.email, password: formData.password });
       if (error) throw error;
-
       if (data.user) {
          await supabase.from('users').upsert({
-            id: data.user.id,
-            email: formData.email.trim(),
-            unit_name: formData.unit_name,
-            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag.trim(),
+            id: data.user.id, email: formData.email, unit_name: formData.unit_name,
+            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag,
             role: authFlow === 'admin' ? 'admin' : 'user',
-            updated_at: new Date().toISOString(),
-            // NOVOS CAMPOS PERSISTIDOS CONFORME SOLICITADO
-            cep: formData.cep,
-            address_street: formData.address_street,
-            address_city: formData.address_city,
-            contact_name: formData.contact_name,
-            phone: formData.phone,
-            cnpj: formData.cnpj
-         }, { onConflict: 'id' });
+            cep: formData.cep, address_street: formData.address_street,
+            address_city: formData.address_city, contact_name: formData.contact_name,
+            phone: formData.phone, cnpj: formData.cnpj
+         });
+         setIsRegistrationSuccess(true);
       }
-
-      setIsRegistrationSuccess(true);
-    } catch (err: any) { showToast(err.message, "error"); }
-    finally { setIsLoading(false); }
+    } catch (err: any) { showToast(err.message, "error"); } finally { setIsLoading(false); }
   };
 
-  const handleFinalizePix = async () => {
-    if (!currentUser || cart.length === 0) return;
-    setIsLoading(true);
-    try {
-      const total = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) + (shippingCost || 0);
-      const { data, error } = await supabase
-        .from('orders')
-        .insert({
-          user_id: currentUser.id,
-          user_email: currentUser.email,
-          unit_name: currentUser.unit_name,
-          items: cart,
-          total_price: total,
-          status: 'AGUARDANDO VALIDAÇÃO',
-          payment_method: 'PIX'
-        })
-        .select()
-        .single();
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
       
-      if (error) throw error;
-      setCart([]); setIsCartOpen(false); setIsPaymentOpen(false);
-      setIsOrderSuccessOpen(true); showToast('Pedido enviado! Aguarde validação do pagamento.', 'success');
-    } catch (error: any) {
-      console.error('Erro completo:', error); showToast('Erro ao finalizar pedido. Tente novamente.', 'error');
-    } finally { setIsLoading(false); }
+      const reader = new FileReader();
+      reader.onload = () => {
+          const result = reader.result as string;
+          if (index === -1) {
+              // Main Image
+              setNewProduct({...newProduct, image_url: result});
+          } else {
+              // Additional Images
+              const currentImages = [...(newProduct.additional_images || [])];
+              // Ensure array is big enough
+              while(currentImages.length <= index) currentImages.push('');
+              currentImages[index] = result;
+              setNewProduct({...newProduct, additional_images: currentImages});
+          }
+      };
+      reader.readAsDataURL(file);
   };
 
-  const handleManualWhatsapp = () => {
-     if (!currentUser) return;
-     const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0) + (shippingCost || 0);
-     const itemsList = cart.map(i => `▪ ${i.quantity}x ${i.name} (${i.selectedSize})`).join('\n');
-     const msg = `*Olá! Gostaria de falar sobre meu pedido:* 💬\n\n👤 *Cliente:* ${currentUser.unit_name}\n📦 *Itens no Carrinho:*\n${itemsList}\n\n💰 *Previsão:* R$ ${total.toFixed(2)}`;
-     window.open(`https://wa.me/551732167854?text=${encodeURIComponent(msg)}`, '_blank');
+  const removeAdditionalImage = (index: number) => {
+      const currentImages = [...(newProduct.additional_images || [])];
+      currentImages.splice(index, 1);
+      setNewProduct({...newProduct, additional_images: currentImages});
   };
 
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault(); setIsLoading(true);
-    const p = { ...newProduct, price: parseFloat(newProduct.price), min_order: parseInt(newProduct.min_order), production_days: parseInt(newProduct.production_days) };
-    
-    if (p.network_tags.length === 0) {
-        showToast("Selecione pelo menos uma rede ou 'Todos os Clientes'", "error");
-        setIsLoading(false);
-        return;
-    }
+  const handleProductSubmit = async () => {
+    let targetTags = newProduct.network_tags; 
+    if (targetTags.length === 0) return showToast("Selecione pelo menos uma rede ou 'Todos'", "error");
 
-    let targetTags = p.network_tags;
-    
-    if (targetTags.includes('*')) {
-        const allProfileTags = clientProfiles.map(cp => cp.network_tag);
-        
-        if (allProfileTags.length === 0) {
-             showToast("Não há clientes cadastrados para aplicar 'Todos'. Adicione redes manualmente.", "error");
-             setIsLoading(false);
-             return;
-        }
-        targetTags = allProfileTags;
-    }
-    
-    targetTags = [...new Set(targetTags)].filter(t => t !== '*');
-
-    const productsToSave = targetTags.map(tag => ({
-        name: p.name, description: p.description, price: p.price, image_url: p.image_url,
-        network_tag: tag, category: p.category, min_order: p.min_order,
-        production_days: p.production_days, available_sizes: p.available_sizes
+    const prods = targetTags.map(tag => ({
+        name: newProduct.name, description: newProduct.description, price: parseFloat(newProduct.price), 
+        image_url: newProduct.image_url, additional_images: newProduct.additional_images, network_tag: tag, category: newProduct.category, 
+        min_order: parseInt(newProduct.min_order), production_days: parseInt(newProduct.production_days), 
+        available_sizes: newProduct.available_sizes
     }));
 
-    try {
-        if (editingId) {
-            await supabase.from('products').delete().eq('id', editingId);
-            await supabase.from('products').insert(productsToSave);
-        } else {
-            await supabase.from('products').insert(productsToSave);
-        }
-        showToast(`Produto ${editingId ? 'atualizado' : 'publicado'}!`);
-        setEditingId(null);
-        setNewProduct({ name: '', price: '', image_url: '', network_tags: [], category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
-        await fetchInitialData();
-    } catch (err) { showToast("Erro ao salvar", "error"); } finally { setIsLoading(false); }
+    if (editingId) await supabase.from('products').delete().eq('id', editingId);
+    await supabase.from('products').insert(prods);
+    showToast("Salvo!"); fetchInitialData(); setEditingId(null);
+    setNewProduct({ name: '', price: '', image_url: '', additional_images: [], network_tags: [], category: 'Masculino', description: '', min_order: '10', production_days: '15', available_sizes: [] });
   };
 
-  // --- SUB-COMPONENTES ---
-  const OrdersManagement = () => {
-    const [ordersList, setOrdersList] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => { fetchOrders(); }, []);
-
-    const fetchOrders = async () => {
-      try {
-        const { data, error } = await supabase.from('orders').select(`*`).order('created_at', { ascending: false });
-        if (error) throw error;
-        setOrdersList(data || []);
-      } catch (err) { console.error('Erro ao buscar pedidos:', err); } finally { setLoading(false); }
-    };
-
-    const handleValidateOrder = async (orderId: string, approve: boolean) => {
-      try {
-        const { error } = await supabase.from('orders').update({
-            // MUDANÇA: Status azul para pagamento aprovado
-            status: approve ? 'PAGO / EM PRODUÇÃO' : 'PAGAMENTO RECUSADO',
-            validated_by: currentUser?.id,
-            validated_at: new Date().toISOString()
-          }).eq('id', orderId);
-        if (error) throw error;
-        showToast(approve ? 'Pagamento confirmado! Pedido em produção.' : 'Pedido recusado.', 'success');
-        fetchOrders();
-      } catch (err) { showToast('Erro ao validar pedido', 'error'); }
-    };
-
-    if (loading) return <div className="text-center py-12 text-zinc-600"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" /><p className="text-xs uppercase font-black">Carregando pedidos...</p></div>;
-
-    const pendingOrders = ordersList.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO');
-
-    if (pendingOrders.length === 0) return (
-        <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center">
-          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
-          <p className="text-zinc-500 uppercase font-black text-xs">Nenhum pedido pendente</p>
-        </div>
-      );
-
-    return (
-      <div className="space-y-4">
-        {pendingOrders.map((order) => (
-          <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-black text-white mb-1">{order.unit_name}</h3>
-                <p className="text-[10px] text-zinc-500 uppercase font-bold">{new Date(order.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-              </div>
-              <div className="text-right"><p className="text-xs text-zinc-500 uppercase font-bold mb-1">Total</p><p className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</p></div>
-            </div>
-            <div className="bg-zinc-950/40 rounded-2xl p-4 mb-4">
-              <p className="text-[10px] text-zinc-600 uppercase font-black mb-2">Itens do Pedido</p>
-              <div className="space-y-2">{order.items.map((item: any, idx: number) => (<div key={idx} className="flex justify-between text-xs"><span className="text-zinc-400">{item.name} ({item.selectedSize})</span><span className="text-white font-bold">{item.quantity}x R$ {item.price.toFixed(2)}</span></div>))}</div>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => handleValidateOrder(order.id, false)} className="flex-1 bg-rose-600/10 text-rose-500 py-3 rounded-xl font-black uppercase text-[9px] hover:bg-rose-600/20 transition-colors">Recusar</button>
-              <button onClick={() => handleValidateOrder(order.id, true)} className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-black uppercase text-[9px] hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20">Confirmar Pagamento</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
+  const toggleSize = (size: string) => {
+      const current = newProduct.available_sizes || [];
+      if (current.includes(size)) {
+          setNewProduct({...newProduct, available_sizes: current.filter(s => s !== size)});
+      } else {
+          setNewProduct({...newProduct, available_sizes: [...current, size]});
+      }
   };
 
-  const OrdersHistory = () => {
-    const [ordersHistory, setOrdersHistory] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState<'all' | 'in_production' | 'completed' | 'rejected'>('all');
-
-    useEffect(() => { fetchAllOrders(); }, []);
-
-    const fetchAllOrders = async () => {
-      try {
-        setLoading(true);
-        const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-        if (error) throw error;
-        setOrdersHistory(data || []);
-      } catch (err) { console.error('Erro ao buscar histórico:', err); showToast('Erro ao carregar histórico', 'error'); } finally { setLoading(false); }
-    };
-
-    const handleAdvanceStage = async (orderId: string) => {
-        try {
-            const { error } = await supabase.from('orders').update({
-                status: 'PEDIDO PRODUZIDO'
-            }).eq('id', orderId);
-            if(error) throw error;
-            showToast("Pedido marcado como Produzido!", "success");
-            fetchAllOrders();
-        } catch(err) {
-            showToast("Erro ao atualizar status", "error");
-        }
-    };
-
-    const filteredOrders = ordersHistory.filter(order => {
-      if (filter === 'all') return true;
-      if (filter === 'in_production') return order.status === 'PAGO / EM PRODUÇÃO';
-      if (filter === 'completed') return order.status === 'PEDIDO PRODUZIDO';
-      if (filter === 'rejected') return order.status === 'PAGAMENTO RECUSADO';
-      return true;
-    });
-
-    const stats = {
-      total: ordersHistory.length,
-      pending: ordersHistory.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length,
-      inProduction: ordersHistory.filter(o => o.status === 'PAGO / EM PRODUÇÃO').length,
-      completed: ordersHistory.filter(o => o.status === 'PEDIDO PRODUZIDO').length,
-      rejected: ordersHistory.filter(o => o.status === 'PAGAMENTO RECUSADO').length,
-      totalRevenue: ordersHistory.filter(o => o.status === 'PAGO / EM PRODUÇÃO' || o.status === 'PEDIDO PRODUZIDO').reduce((acc, o) => acc + (o.total_price || o.total_amount || 0), 0)
-    };
-
-    const getStatusBadge = (status: string) => {
-      if (status === 'AGUARDANDO VALIDAÇÃO') return <span className="px-3 py-1 bg-yellow-500/10 text-yellow-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><AlertCircle size={10} /> Pendente</span>;
-      // MUDANÇA: Status azul para produção
-      if (status === 'PAGO / EM PRODUÇÃO') return <span className="px-3 py-1 bg-blue-500/10 text-blue-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><Factory size={10} /> Em Produção</span>;
-      // MUDANÇA: Status verde para concluído
-      if (status === 'PEDIDO PRODUZIDO') return <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><CheckCheck size={10} /> Produzido</span>;
-      if (status === 'PAGAMENTO RECUSADO') return <span className="px-3 py-1 bg-rose-500/10 text-rose-500 rounded-full text-[9px] font-black uppercase flex items-center gap-1"><X size={10} /> Recusado</span>;
-      return <span className="px-3 py-1 bg-zinc-500/10 text-zinc-500 rounded-full text-[9px] font-black uppercase">{status}</span>;
-    };
-
-    if (loading) return <div className="text-center py-20 text-zinc-600"><Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" /><p className="text-xs uppercase font-black tracking-widest">Carregando histórico...</p></div>;
-
-    return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          <div className="bg-zinc-900/40 border border-white/5 rounded-[32px] p-6"><p className="text-[10px] text-zinc-500 uppercase font-black mb-2">Total</p><p className="text-2xl font-black text-white">{stats.total}</p></div>
-          <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-[32px] p-6"><p className="text-[10px] text-yellow-600 uppercase font-black mb-2">Pendentes</p><p className="text-2xl font-black text-yellow-500">{stats.pending}</p></div>
-          {/* MUDANÇA: Card azul para produção */}
-          <div className="bg-blue-500/5 border border-blue-500/20 rounded-[32px] p-6"><p className="text-[10px] text-blue-600 uppercase font-black mb-2">Produzindo</p><p className="text-2xl font-black text-blue-500">{stats.inProduction}</p></div>
-          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-[32px] p-6"><p className="text-[10px] text-emerald-600 uppercase font-black mb-2">Prontos</p><p className="text-2xl font-black text-emerald-500">{stats.completed}</p></div>
-          <div className="bg-rose-500/5 border border-rose-500/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Recusados</p><p className="text-2xl font-black text-rose-500">{stats.rejected}</p></div>
-          <div className="bg-[#E11D48]/5 border border-[#E11D48]/20 rounded-[32px] p-6"><p className="text-[10px] text-rose-600 uppercase font-black mb-2">Receita</p><p className="text-xl font-black text-[#E11D48]">{formatCurrency(stats.totalRevenue)}</p></div>
-        </div>
-        
-        <div className="flex flex-wrap gap-3 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 w-fit">
-          <button onClick={() => setFilter('all')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'all' ? 'bg-[#E11D48] text-white' : 'text-zinc-500 hover:text-white'}`}>Todos</button>
-          <button onClick={() => setFilter('in_production')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'in_production' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Em Produção</button>
-          <button onClick={() => setFilter('completed')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'completed' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Produzidos</button>
-          <button onClick={() => setFilter('rejected')} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-colors ${filter === 'rejected' ? 'bg-rose-600 text-white' : 'text-zinc-500 hover:text-white'}`}>Recusados</button>
-        </div>
-
-        {filteredOrders.length === 0 ? <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-12 text-center"><Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" /><p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido encontrado</p></div> : (
-          <div className="space-y-4">
-            {filteredOrders.map((order) => (
-              <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 hover:border-white/10 transition-colors">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <div className="flex items-center gap-3 mb-2"><h3 className="text-base font-black text-white">{order.unit_name}</h3>{getStatusBadge(order.status)}</div>
-                    <p className="text-xs text-zinc-500 font-medium">{order.user_email}</p>
-                    <p className="text-[10px] text-zinc-600 uppercase font-bold mt-1">Pedido #{order.id.slice(0, 8).toUpperCase()} • {new Date(order.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                  </div>
-                  <div className="text-right"><p className="text-2xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</p><p className="text-[9px] text-zinc-600 uppercase font-bold mt-1">{order.payment_method || 'PIX'}</p></div>
-                </div>
-                
-                {/* MUDANÇA: Botão de ação rápida para concluir produção */}
-                {order.status === 'PAGO / EM PRODUÇÃO' && (
-                    <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <Factory size={18} className="text-blue-500 animate-pulse" />
-                            <div>
-                                <p className="text-xs font-bold text-white">Pedido em produção</p>
-                                <p className="text-[10px] text-zinc-400">Marque como concluído quando estiver pronto para envio.</p>
-                            </div>
-                        </div>
-                        <button onClick={() => handleAdvanceStage(order.id)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
-                           <CheckCheck size={14} /> Marcar como Produzido
-                        </button>
-                    </div>
-                )}
-
-                <details className="group">
-                  <summary className="cursor-pointer text-[10px] text-zinc-500 uppercase font-black hover:text-white transition-colors list-none flex items-center gap-2"><svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg> Ver {order.items.length} {order.items.length === 1 ? 'item' : 'itens'}</summary>
-                  <div className="mt-4 bg-zinc-950/40 rounded-2xl p-4 space-y-2">{order.items.map((item: any, idx: number) => (<div key={idx} className="flex items-center justify-between text-sm"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-xl bg-zinc-900 overflow-hidden"><img src={item.image_url} alt={item.name} className="w-full h-full object-cover" /></div><span className="text-zinc-300 font-medium">{item.name} ({item.selectedSize})</span></div><span className="text-white font-bold">{item.quantity}x R$ {item.price.toFixed(2)}</span></div>))}</div>
-                </details>
-                {order.validated_at && <div className="mt-4 pt-4 border-t border-white/5 text-[9px] text-zinc-600">Validado em {new Date(order.validated_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
+  const toggleNetwork = (tag: string) => {
+      const current = newProduct.network_tags || [];
+      if (tag === '*') {
+          if (current.includes('*')) setNewProduct({...newProduct, network_tags: []});
+          else setNewProduct({...newProduct, network_tags: ['*']});
+          return;
+      }
+      let newTags = current.filter(t => t !== '*');
+      if (newTags.includes(tag)) {
+          newTags = newTags.filter(t => t !== tag);
+      } else {
+          newTags.push(tag);
+      }
+      setNewProduct({...newProduct, network_tags: newTags});
   };
 
-  const ClientOrderHistory = ({ userId }: { userId: string }) => {
-    const [historyOrders, setHistoryOrders] = useState<any[]>([]);
-    useEffect(() => {
-      const fetchHistory = async () => {
-        const { data } = await supabase.from('orders').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-        if (data) setHistoryOrders(data);
-      };
-      fetchHistory();
-    }, [userId]);
-    
-    // MUDANÇA: Novas cores para o cliente ver
-    const getStatusColor = (status: string) => {
-      if (status.includes('AGUARDANDO')) return 'text-yellow-500';
-      if (status.includes('EM PRODUÇÃO')) return 'text-blue-500';
-      if (status.includes('PRODUZIDO')) return 'text-emerald-500';
-      if (status.includes('RECUSADO')) return 'text-rose-500';
-      return 'text-zinc-500';
-    };
-
-    if (historyOrders.length === 0) return <div className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-12 text-center"><Package className="w-12 h-12 text-zinc-700 mx-auto mb-4" /><p className="text-zinc-600 uppercase font-black text-xs">Nenhum pedido realizado</p></div>;
-    return (
-      <div className="grid gap-4">
-        {historyOrders.map((order) => (
-          <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 flex items-center justify-between">
-            <div className="flex-1"><p className="text-xs text-zinc-500 uppercase font-bold mb-1">Pedido #{order.id.slice(0, 8).toUpperCase()}</p><p className="text-sm font-black text-white mb-2">{order.items.length} {order.items.length === 1 ? 'item' : 'itens'}</p><p className={`text-[10px] uppercase font-black ${getStatusColor(order.status)}`}>{order.status}</p></div>
-            <div className="text-right"><p className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || order.total_amount || 0)}</p><p className="text-[9px] text-zinc-600 mt-1">{new Date(order.created_at).toLocaleDateString('pt-BR')}</p></div>
-          </div>
-        ))}
-      </div>
-    );
+  const handleStatusUpdate = async (orderId: string, newStatus: string) => {
+      await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+      showToast(`Status alterado para: ${newStatus}`);
+      fetchInitialData();
+  };
+  
+  const handleDeleteUser = async (id: string) => {
+      if(!confirm("Excluir usuário?")) return;
+      await supabase.from('users').delete().eq('id', id);
+      fetchInitialData();
+      showToast("Usuário excluído");
   };
 
-  const totalRevenue = useMemo(() => orders.reduce((acc, order) => acc + (order.total_price || order.total_amount || 0), 0), [orders]);
-  const mostActiveNetwork = useMemo(() => {
-    if (orders.length === 0) return '---';
-    const salesByNetwork: Record<string, number> = {};
-    orders.forEach(order => {
-      // CORREÇÃO: Garante string vazia se nulo antes de toLowerCase
-      const tag = (order.network_tag || '').toLowerCase().trim() || 'desconhecido';
-      salesByNetwork[tag] = (salesByNetwork[tag] || 0) + (order.total_price || order.total_amount || 0);
-    });
-    let top = '---'; let max = 0;
-    Object.entries(salesByNetwork).forEach(([tag, total]) => { if (total > max) { max = total; top = tag; } });
-    return top === '---' ? top : top.replace(/-/g, ' ').toUpperCase();
-  }, [orders]);
+  const handleFinalize = async () => {
+      const total = cart.reduce((a, b) => a + b.price * b.quantity, 0) + (shippingCost || 0);
+      await supabase.from('orders').insert({
+          user_id: currentUser!.id, user_email: currentUser!.email, unit_name: currentUser!.unit_name,
+          items: cart, total_price: total, status: 'AGUARDANDO VALIDAÇÃO', payment_method: 'PIX',
+          network_tag: currentUser!.network_tag
+      });
+      setCart([]); setIsCartOpen(false); setIsPaymentOpen(false); setIsOrderSuccessOpen(true);
+      fetchInitialData();
+  };
 
-  if (isLoading && !currentUser) return <Spinner />;
+  // --- RENDER ---
+  if (isLoading) return <Spinner />;
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-[#E11D48]/10 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-[#E11D48]/5 rounded-full blur-[120px]" />
+      <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6">
         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
-        <AnimatePresence mode="wait">
-          {authFlow === 'initial' && (
-            <motion.div key="initial" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-md z-10">
-              <div className="flex flex-col items-center mb-10"><Logo className="w-20 h-20 mb-4" /><h1 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.4em]">Tiquinho Corporate</h1><p className="text-zinc-600 text-xs mt-2 text-center">Plataforma de Uniformes Corporativos</p></div>
-              <div className="space-y-4">
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setAuthFlow('admin')} className="w-full glass p-8 rounded-[40px] shadow-2xl hover:border-[#E11D48]/30 transition-all group">
-                  <div className="flex items-start gap-4"><div className="w-14 h-14 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#E11D48]/20 transition-colors"><ShieldCheck className="text-[#E11D48]" size={28} /></div><div className="flex-1 text-left"><h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Gestor</h3><p className="text-zinc-500 text-xs font-medium">Gerenciar catálogo e pedidos da rede</p></div></div>
-                </motion.button>
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setAuthFlow('client')} className="w-full glass p-8 rounded-[40px] shadow-2xl hover:border-[#E11D48]/30 transition-all group">
-                  <div className="flex items-start gap-4"><div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors"><ShoppingCart className="text-emerald-500" size={28} /></div><div className="flex-1 text-left"><h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Sou Cliente</h3><p className="text-zinc-500 text-xs font-medium">Acessar catálogo e fazer pedidos</p></div></div>
-                </motion.button>
-              </div>
-            </motion.div>
-          )}
-          {(authFlow === 'admin' || authFlow === 'client') && (
-            <motion.div key="auth" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className={`w-full ${isSigningUp && authFlow === 'client' ? 'max-w-4xl' : 'max-w-md'} z-10 transition-all duration-500`}>
-              <button onClick={() => { setAuthFlow('initial'); setIsSigningUp(false); setIsRegistrationSuccess(false); }} className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>Voltar</button>
-              {isRegistrationSuccess ? (
-                <div className="glass p-10 rounded-[40px] shadow-2xl text-center">
-                  <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6"><Mail size={40} className="text-emerald-500" /></div><h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">Verifique seu E-mail</h2><p className="text-zinc-400 text-sm mb-6">Enviamos um link de confirmação para <strong>{formData.email}</strong>.<br/>Por favor, clique no link para ativar sua conta corporativa.</p><button onClick={() => { setIsRegistrationSuccess(false); setIsSigningUp(false); }} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors">Voltar para Login</button>
+        <div className="w-full max-w-md">
+            {authFlow === 'initial' ? (
+                <div className="flex flex-col items-center gap-6">
+                    <div className="w-24 h-24 bg-[#E11D48] rounded-[32px] flex items-center justify-center mb-4 shadow-2xl shadow-rose-600/20">
+                        <span className="text-5xl font-black text-white italic -skew-x-6">T</span>
+                    </div>
+                    <div className="text-center mb-8">
+                        <h2 className="text-xs font-bold tracking-[0.4em] text-zinc-500 uppercase mb-1">Tiquinho Corporate</h2>
+                        <p className="text-zinc-600 text-[10px]">Plataforma de Uniformes Corporativos</p>
+                    </div>
+
+                    <button onClick={() => setAuthFlow('admin')} className="w-full glass p-8 rounded-[40px] border border-white/5 hover:border-[#E11D48]/30 transition-all group flex items-center gap-6">
+                        <div className="w-16 h-16 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#E11D48]/20 transition-colors">
+                            <ShieldCheck className="text-[#E11D48]" size={32} />
+                        </div>
+                        <div className="text-left">
+                            <h3 className="text-xl font-black text-white">SOU GESTOR</h3>
+                            <p className="text-zinc-500 text-xs">Gerenciar catálogo e pedidos da rede</p>
+                        </div>
+                    </button>
+
+                    <button onClick={() => setAuthFlow('client')} className="w-full glass p-8 rounded-[40px] border border-white/5 hover:border-emerald-500/30 transition-all group flex items-center gap-6">
+                        <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
+                            <ShoppingCart className="text-emerald-500" size={32} />
+                        </div>
+                        <div className="text-left">
+                            <h3 className="text-xl font-black text-white">SOU CLIENTE</h3>
+                            <p className="text-zinc-500 text-xs">Acessar catálogo e fazer pedidos</p>
+                        </div>
+                    </button>
                 </div>
-              ) : (
-                <>
-                  <div className="flex flex-col items-center mb-10">
-                    <div className={`w-16 h-16 ${authFlow === 'admin' ? 'bg-[#E11D48]/10' : 'bg-emerald-500/10'} rounded-2xl flex items-center justify-center mb-4`}>{authFlow === 'admin' ? <ShieldCheck className="text-[#E11D48]" size={32} /> : <ShoppingCart className="text-emerald-500" size={32} />}</div>
-                    <h1 className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.4em]">{authFlow === 'admin' ? 'Painel Gestor' : 'Portal Cliente'}</h1>
-                  </div>
-                  <div className="glass p-10 rounded-[40px] shadow-2xl">
-                    <h2 className="text-2xl font-black text-white mb-8 text-center uppercase tracking-tighter">{isSigningUp ? (authFlow === 'admin' ? 'Criar Conta Admin' : 'Cadastro Corporativo') : 'Login Acesso'}</h2>
-                    <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4">
-                      {isSigningUp ? (
-                         authFlow === 'admin' ? (
+            ) : (
+                <div className={`glass rounded-[40px] border border-white/5 relative overflow-hidden ${authFlow === 'client' && isSigningUp ? 'p-8 max-w-3xl w-[800px] -ml-[180px]' : 'p-10'}`}>
+                    <div className="absolute -top-20 -right-20 w-60 h-60 bg-[#E11D48]/10 rounded-full blur-3xl"></div>
+                    <button onClick={() => setAuthFlow('initial')} className="mb-8 text-zinc-500 hover:text-white text-xs font-bold uppercase tracking-widest relative z-10">← Voltar</button>
+                    <h2 className="text-3xl font-black text-white mb-2 uppercase relative z-10">{isSigningUp ? 'Cadastro' : 'Login'}</h2>
+                    <p className="text-zinc-500 text-xs mb-8 uppercase tracking-widest relative z-10">{authFlow === 'admin' ? 'Acesso Gestor' : 'Acesso Cliente'}</p>
+                    
+                    <form onSubmit={isSigningUp ? handleSignUp : handleLogin} className="space-y-4 relative z-10">
+                        {!isSigningUp ? (
                             <>
-                              <input type="text" placeholder="Nome da Empresa/Rede" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                              <div className="relative"><input type="password" placeholder="Chave de Acesso Administrativa" value={formData.adminKey} onChange={e => setFormData({...formData, adminKey: e.target.value})} className="w-full bg-zinc-900/50 border border-[#E11D48]/20 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
-                              <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                              <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
+                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
                             </>
-                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-1 border-b border-white/5 pb-1">Dados da Empresa</div>
-                                <div className="relative">
-                                  <input type="text" list="network-suggestions" placeholder="Rede / Franquia *" value={formData.network_tag} onChange={e => setFormData({...formData, network_tag: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                  <datalist id="network-suggestions">{availableNetworks.map(net => <option key={net} value={net} />)}</datalist>
-                                  <Search className="absolute right-4 top-4 text-zinc-600 pointer-events-none" size={16} />
-                                </div>
-                                <input type="text" placeholder="Nome da Unidade *" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                <input type="text" placeholder="CNPJ *" value={formData.cnpj} onChange={e => setFormData({...formData, cnpj: e.target.value.replace(/\D/g, '').slice(0, 14)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                <input type="text" placeholder="Telefone *" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                <input type="text" placeholder="Nome Responsável" value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" />
-                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Endereço</div>
-                                <div className="relative"><input type="text" placeholder="CEP *" value={formData.cep} onBlur={checkCep} onChange={e => setFormData({...formData, cep: e.target.value.replace(/\D/g, '').slice(0, 8)})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required /></div>
-                                <input type="text" placeholder="Cidade" value={formData.address_city} onChange={e => setFormData({...formData, address_city: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600 focus:border-[#E11D48]/50 outline-none transition-colors" />
-                                <input type="text" placeholder="Logradouro" value={formData.address_street} onChange={e => setFormData({...formData, address_street: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600 focus:border-[#E11D48]/50 outline-none transition-colors" />
-                                <div className="md:col-span-2 text-[10px] font-black uppercase text-zinc-500 tracking-widest mt-4 mb-1 border-b border-white/5 pb-1">Acesso</div>
-                                <input type="email" placeholder="E-mail *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                                <input type="password" placeholder="Senha *" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="md:col-span-2 w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                            </div>
-                         )
-                      ) : (
-                        <>
-                           <input type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                           <input type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-zinc-900/50 border border-white/5 p-4 rounded-2xl text-white text-sm placeholder:text-zinc-600" required />
-                        </>
-                      )}
-                      <button type="submit" disabled={isLoading} className={`w-full ${authFlow === 'admin' ? 'bg-[#E11D48] hover:bg-[#BE123C]' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-[0.2em] shadow-xl transition-colors disabled:opacity-50 mt-6`}>{isLoading ? 'PROCESSANDO...' : (isSigningUp ? 'FINALIZAR CADASTRO' : 'ACESSAR PAINEL')}</button>
+                        ) : (
+                            <>
+                                {authFlow === 'admin' && (
+                                    <div className="space-y-4">
+                                        <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" type="password" placeholder="Chave Mestra" value={formData.adminKey} onChange={e => setFormData({...formData, adminKey: e.target.value})} />
+                                        <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" type="email" placeholder="E-mail" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                                        <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" type="password" placeholder="Senha" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
+                                    </div>
+                                )}
+                                
+                                {authFlow === 'client' && (
+                                    <div className="space-y-6">
+                                        {/* DADOS DA EMPRESA */}
+                                        <div>
+                                            <h3 className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Dados da Empresa</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div className="relative">
+                                                    <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="Rede / Franquia *" list="nets" value={formData.network_tag} onChange={e => setFormData({...formData, network_tag: e.target.value})}/>
+                                                    <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-600" size={16}/>
+                                                    <datalist id="nets">{availableNetworks.map(n => <option key={n} value={n}/>)}</datalist>
+                                                </div>
+                                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="Nome da Unidade *" value={formData.unit_name} onChange={e => setFormData({...formData, unit_name: e.target.value})}/>
+                                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="CNPJ *" value={formData.cnpj} onChange={e => setFormData({...formData, cnpj: e.target.value})}/>
+                                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="Telefone *" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}/>
+                                                <input className="col-span-1 md:col-span-2 w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="Nome Responsável" value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})}/>
+                                            </div>
+                                        </div>
+
+                                        {/* ENDEREÇO */}
+                                        <div className="pt-2 border-t border-white/5">
+                                            <h3 className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest mt-2">Endereço</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="CEP *" value={formData.cep} onBlur={checkCep} onChange={e => setFormData({...formData, cep: e.target.value})}/>
+                                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="Cidade" value={formData.address_city} onChange={e => setFormData({...formData, address_city: e.target.value})}/>
+                                                <input className="col-span-1 md:col-span-2 w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" placeholder="Logradouro" value={formData.address_street} onChange={e => setFormData({...formData, address_street: e.target.value})}/>
+                                            </div>
+                                        </div>
+
+                                        {/* ACESSO */}
+                                        <div className="pt-2 border-t border-white/5">
+                                            <h3 className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest mt-2">Acesso</h3>
+                                            <div className="space-y-4">
+                                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" type="email" placeholder="E-mail *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                                                <input className="w-full bg-zinc-950/50 border border-white/10 rounded-2xl p-4 text-white placeholder:text-zinc-600 outline-none focus:border-[#E11D48]" type="password" placeholder="Senha *" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                        <button className="w-full bg-[#E11D48] hover:bg-rose-600 text-white font-black py-4 rounded-2xl uppercase text-xs tracking-widest transition-colors shadow-lg shadow-rose-900/20">{isSigningUp ? 'Concluir Cadastro' : 'Acessar Painel'}</button>
                     </form>
-                    <button onClick={() => { setIsSigningUp(!isSigningUp); setFormData(prev => ({...prev, email: '', password: ''})); }} className="w-full mt-6 text-zinc-600 text-[10px] font-black uppercase hover:text-white transition-colors">{isSigningUp ? 'Já tenho conta' : 'Criar nova conta'}</button>
-                  </div>
-                </>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+                    <button onClick={() => setIsSigningUp(!isSigningUp)} className="w-full mt-6 text-zinc-500 text-[10px] font-black uppercase hover:text-white relative z-10">{isSigningUp ? 'Já tenho conta' : 'Criar nova conta'}</button>
+                </div>
+            )}
+        </div>
       </div>
     );
   }
+
+  // --- ADMIN PANEL ---
+  if (currentUser.role === 'admin') {
+    const stats = {
+      activeModels: products.length,
+      revenue: orders.filter(o => o.status !== 'AGUARDANDO VALIDAÇÃO').reduce((acc, o) => acc + (o.total_price || 0), 0),
+      topNetwork: 'Desconhecido',
+      // History Stats
+      totalOrders: orders.length,
+      pendingOrders: orders.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length,
+      producingOrders: orders.filter(o => o.status === 'PAGO / EM PRODUÇÃO').length,
+      readyOrders: orders.filter(o => o.status === 'PEDIDO PRODUZIDO').length,
+      refusedOrders: orders.filter(o => o.status === 'PAGAMENTO RECUSADO').length,
+    };
+
+    return (
+      <div className="min-h-screen bg-[#09090b] text-zinc-100 p-8">
+         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
+         
+         {/* Admin Header */}
+         <div className="w-full max-w-[96%] mx-auto flex justify-between items-center mb-10 bg-zinc-900/50 backdrop-blur-md p-6 rounded-[32px] border border-white/5 sticky top-6 z-40 shadow-2xl">
+            <div className="flex items-center gap-4">
+               <Logo />
+               <h1 className="text-xs font-black uppercase text-zinc-400 tracking-widest">Painel Jéssica</h1>
+            </div>
+            <button onClick={() => setCurrentUser(null)} className="p-3 bg-zinc-900 rounded-xl text-zinc-500 hover:text-white border border-white/5 transition-colors"><LogOut size={20}/></button>
+         </div>
+
+         {/* Admin Tabs */}
+         <div className="w-full max-w-[96%] mx-auto bg-zinc-950 border border-white/5 p-1 rounded-2xl flex gap-1 mb-10 overflow-x-auto">
+             {['products', 'pending', 'history', 'users'].map(tab => (
+                 <button 
+                    key={tab} 
+                    onClick={() => setAdminTab(tab as any)}
+                    className={`flex-1 py-4 px-6 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${adminTab === tab ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'text-zinc-500 hover:bg-zinc-900'}`}
+                 >
+                    {tab === 'products' ? 'Produtos' : tab === 'pending' ? 'Pendentes' : tab === 'history' ? 'Histórico' : 'Acessos'}
+                 </button>
+             ))}
+         </div>
+
+         <div className="w-full max-w-[96%] mx-auto">
+             {adminTab === 'products' && (
+                 <>
+                    {/* Performance Stats */}
+                    <div className="mb-10">
+                       <h3 className="flex items-center gap-2 text-lg font-black uppercase text-white mb-6"><Factory className="text-[#E11D48]" size={20}/> Performance Global</h3>
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                           <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                               <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 mb-6"><LayoutGrid size={24}/></div>
+                               <p className="text-[10px] font-black uppercase text-zinc-500 mb-2">Modelos Ativos</p>
+                               <p className="text-4xl font-black text-white">{stats.activeModels}</p>
+                           </div>
+                           <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                               <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 mb-6"><Wallet size={24}/></div>
+                               <p className="text-[10px] font-black uppercase text-zinc-500 mb-2">Receita Confirmada</p>
+                               <p className="text-4xl font-black text-white">{formatCurrency(stats.revenue)}</p>
+                           </div>
+                           <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                               <div className="w-12 h-12 bg-rose-500/10 rounded-2xl flex items-center justify-center text-rose-500 mb-6"><TrendingUp size={24} /></div> 
+                               <p className="text-[10px] font-black uppercase text-zinc-500 mb-2">Rede Mais Ativa</p>
+                               <p className="text-2xl font-black text-white">{stats.topNetwork}</p>
+                           </div>
+                       </div>
+                    </div>
+
+                    {/* Add Product Form - PREMIUM LAYOUT RESTORED */}
+                    <div className="bg-zinc-950 border border-white/5 rounded-[40px] p-12 mb-12 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#E11D48]/5 rounded-full blur-[100px] pointer-events-none"></div>
+                        <h3 className="flex items-center gap-3 text-2xl font-black uppercase text-white mb-10 relative z-10"><PlusCircle className="text-[#E11D48]" size={28}/> {editingId ? 'Editar Produto' : 'Gerenciar Catálogo'}</h3>
+                        
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 relative z-10">
+                            {/* Image Upload Column - TALL */}
+                            <div className="lg:col-span-1">
+                                <p className="text-[10px] font-bold uppercase text-zinc-500 mb-4 tracking-widest">Imagem Principal</p>
+                                <div onClick={() => fileInputRef.current?.click()} className="h-[400px] bg-zinc-900/50 border-2 border-dashed border-zinc-800 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48] transition-all group relative overflow-hidden mb-4">
+                                    {newProduct.image_url ? (
+                                        <img src={newProduct.image_url} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                                    ) : (
+                                        <>
+                                            <div className="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mb-6 group-hover:bg-[#E11D48]/20 transition-colors">
+                                                <ImageIcon className="text-zinc-600 group-hover:text-[#E11D48]" size={32}/>
+                                            </div>
+                                            <span className="text-xs text-zinc-500 font-bold uppercase tracking-widest">Upload Imagem</span>
+                                        </>
+                                    )}
+                                </div>
+                                <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => handleImageUpload(e, -1)}/>
+
+                                {/* Additional Images Upload */}
+                                <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Fotos Extras (Máx 3)</p>
+                                <div className="grid grid-cols-3 gap-3">
+                                    {[0, 1, 2].map(idx => (
+                                        <div key={idx} className="relative aspect-square">
+                                            <div 
+                                                onClick={() => {
+                                                    if (idx === 0) extraFileRef1.current?.click();
+                                                    if (idx === 1) extraFileRef2.current?.click();
+                                                    if (idx === 2) extraFileRef3.current?.click();
+                                                }}
+                                                className="w-full h-full bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center cursor-pointer hover:border-[#E11D48] overflow-hidden group"
+                                            >
+                                                {newProduct.additional_images && newProduct.additional_images[idx] ? (
+                                                    <img src={newProduct.additional_images[idx]} className="w-full h-full object-cover"/>
+                                                ) : (
+                                                    <Plus size={16} className="text-zinc-600 group-hover:text-[#E11D48]"/>
+                                                )}
+                                            </div>
+                                            {newProduct.additional_images && newProduct.additional_images[idx] && (
+                                                <button onClick={() => removeAdditionalImage(idx)} className="absolute -top-1 -right-1 bg-rose-600 rounded-full p-1 shadow-lg hover:scale-110 transition-transform">
+                                                    <X size={10} className="text-white"/>
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    <input type="file" ref={extraFileRef1} className="hidden" onChange={(e) => handleImageUpload(e, 0)}/>
+                                    <input type="file" ref={extraFileRef2} className="hidden" onChange={(e) => handleImageUpload(e, 1)}/>
+                                    <input type="file" ref={extraFileRef3} className="hidden" onChange={(e) => handleImageUpload(e, 2)}/>
+                                </div>
+                            </div>
+                            
+                            {/* Inputs Column - WIDE */}
+                            <div className="lg:col-span-2 space-y-8">
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Nome do Uniforme</p>
+                                    <input className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" placeholder="Ex: Camiseta Polo Branca" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
+                                </div>
+                                
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Descrição Detalhada</p>
+                                    <textarea className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm h-40 resize-none focus:border-[#E11D48] outline-none transition-colors" placeholder="Detalhes sobre tecido, gola, acabamento..." value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} />
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-6">
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Preço Unitário (R$)</p>
+                                        <input type="number" className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Categoria / Estação</p>
+                                        <select className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})}>
+                                            <option>Masculino</option><option>Feminino</option><option>Inverno</option><option>Acessórios</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-6">
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Pedido Mínimo (UN)</p>
+                                        <input type="number" className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Prazo Produção (Dias)</p>
+                                        <input type="number" className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Tamanhos Disponíveis</p>
+                                    <div className="flex gap-3">
+                                        {SIZES_OPTIONS.map(s => (
+                                            <button 
+                                                key={s}
+                                                type="button"
+                                                onClick={() => toggleSize(s)}
+                                                className={`flex-1 py-4 rounded-2xl text-xs font-black border transition-all ${newProduct.available_sizes.includes(s) ? 'bg-zinc-800 border-zinc-600 text-white shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-500 hover:bg-zinc-800'}`}
+                                            >
+                                                {s}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="pt-8 border-t border-white/5">
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-6 tracking-widest">Disponibilidade / Rede</p>
+                                    
+                                    {/* Todos os Clientes Checkbox */}
+                                    <div onClick={() => toggleNetwork('*')} className="flex items-center gap-4 p-6 bg-zinc-900 border border-white/5 rounded-2xl cursor-pointer hover:bg-zinc-800 transition-colors mb-4 group">
+                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${newProduct.network_tags.includes('*') ? 'bg-white border-white scale-110' : 'border-zinc-700 group-hover:border-zinc-500'}`}>
+                                            {newProduct.network_tags.includes('*') && <Check size={20} className="text-black"/>}
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-black text-white uppercase">Todos os Clientes</p>
+                                            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Produto visível em toda a plataforma</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Lista de Redes Específicas */}
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Rede / Franquia</p>
+                                    <div className="space-y-3 mb-8 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                                        {clientProfiles.map(profile => (
+                                            <div key={profile.id} onClick={() => toggleNetwork(profile.network_tag)} className="flex items-center gap-4 p-4 border border-white/5 bg-zinc-950 rounded-2xl cursor-pointer hover:border-white/20 transition-all group">
+                                                <div className={`w-6 h-6 rounded-md border flex items-center justify-center transition-all ${newProduct.network_tags.includes(profile.network_tag) ? 'bg-white border-white' : 'border-zinc-700'}`}>
+                                                    {newProduct.network_tags.includes(profile.network_tag) && <Check size={14} className="text-black"/>}
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-black text-white uppercase">{profile.unit_name}</p>
+                                                    <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{profile.network_tag}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {clientProfiles.length === 0 && <p className="text-zinc-600 text-xs italic p-4 text-center">Nenhuma rede cadastrada.</p>}
+                                    </div>
+
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Adicionar Manualmente</p>
+                                    <input 
+                                        className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" 
+                                        placeholder="Ex: nova-rede" 
+                                        onKeyDown={(e) => { 
+                                            if(e.key === 'Enter') { 
+                                                e.preventDefault(); 
+                                                const val = e.currentTarget.value; 
+                                                if(val) toggleNetwork(val); 
+                                                e.currentTarget.value = ''; 
+                                            }
+                                        }} 
+                                    />
+                                    {/* Tags manuais adicionadas que não estão nos perfis */}
+                                    <div className="flex flex-wrap gap-2 mt-4">
+                                        {newProduct.network_tags.filter(t => t !== '*' && !clientProfiles.some(cp => cp.network_tag === t)).map(tag => (
+                                             <span key={tag} className="bg-zinc-800 px-4 py-2 rounded-xl text-xs flex items-center gap-2 border border-white/5 font-bold uppercase hover:border-rose-500/50 transition-colors">{tag} <X size={14} className="cursor-pointer hover:text-rose-500" onClick={() => toggleNetwork(tag)}/></span>
+                                        ))}
+                                    </div>
+                                </div>
+                                
+                                <button onClick={handleProductSubmit} className="w-full bg-[#E11D48] hover:bg-rose-600 text-white font-black py-6 rounded-2xl uppercase text-sm tracking-[0.2em] shadow-2xl shadow-rose-900/30 transition-all hover:scale-[1.01] hover:shadow-rose-900/50">{editingId ? 'Atualizar' : 'Publicar'}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Product Filter Bar */}
+                    <div className="flex items-center justify-between mb-8 px-2">
+                        <div className="flex items-center gap-3">
+                           <Filter size={20} className="text-[#E11D48]"/>
+                           <h3 className="text-lg font-black uppercase text-white tracking-wide">Catálogo Cadastrado</h3>
+                        </div>
+                        <div className="flex gap-2 overflow-x-auto max-w-[600px] pb-2 custom-scrollbar">
+                           <button 
+                               onClick={() => setProductFilter('TODOS')}
+                               className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${productFilter === 'TODOS' ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'bg-zinc-900 text-zinc-500 hover:text-white border border-white/5'}`}
+                           >
+                               TODOS
+                           </button>
+                           {availableNetworks.map(net => (
+                               <button 
+                                   key={net}
+                                   onClick={() => setProductFilter(net)}
+                                   className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${productFilter === net ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'bg-zinc-900 text-zinc-500 hover:text-white border border-white/5'}`}
+                               >
+                                   {net}
+                               </button>
+                           ))}
+                        </div>
+                    </div>
+
+                    {/* Product List with Filter Logic */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
+                        {products
+                            .filter(p => productFilter === 'TODOS' || p.network_tag === productFilter)
+                            .map(p => (
+                            <div key={p.id} className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex items-center gap-6 group hover:border-white/20 transition-all hover:bg-zinc-900/50">
+                                <img src={p.image_url} className="w-24 h-24 rounded-2xl object-cover bg-zinc-900 shadow-lg"/>
+                                <div>
+                                    <h4 className="text-sm font-black text-white uppercase mb-1">{p.name}</h4>
+                                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-4">{p.network_tag}</p>
+                                    <div className="flex gap-3">
+                                        <button onClick={() => { setEditingId(p.id); setNewProduct({ name: p.name, price: p.price.toString(), description: p.description || '', image_url: p.image_url, additional_images: p.additional_images || [], network_tags: [p.network_tag], category: p.category, min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [] }); }} className="px-4 py-2 bg-zinc-950 rounded-lg text-[10px] text-zinc-400 hover:text-white font-bold uppercase tracking-wider transition-colors border border-white/5">Editar</button>
+                                        <button onClick={() => { if(confirm("Deletar?")) { supabase.from('products').delete().eq('id', p.id).then(fetchInitialData); } }} className="px-4 py-2 bg-rose-950/30 rounded-lg text-[10px] text-rose-500 font-bold uppercase tracking-wider transition-colors border border-rose-500/10 hover:bg-rose-900/50">Excluir</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                 </>
+             )}
+
+             {adminTab === 'pending' && (
+                 <div>
+                     <h3 className="flex items-center gap-3 text-2xl font-black uppercase text-white mb-8"><Package className="text-[#E11D48]" size={28}/> Pedidos Pendentes de Validação</h3>
+                     {orders.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length === 0 ? (
+                         <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-24 flex flex-col items-center justify-center opacity-50">
+                             <CheckCircle2 size={64} className="text-emerald-500 mb-6"/>
+                             <p className="text-zinc-500 font-bold uppercase tracking-[0.2em]">Nenhum pedido pendente</p>
+                         </div>
+                     ) : (
+                         <div className="grid gap-6">
+                             {orders.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').map(order => (
+                                 <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                                     <div className="flex justify-between items-start mb-8">
+                                         <div>
+                                             <h4 className="text-2xl font-black text-white uppercase mb-1">{order.unit_name}</h4>
+                                             <p className="text-xs text-zinc-500 uppercase tracking-widest flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div> {new Date(order.created_at).toLocaleDateString()} • {order.user_email}</p>
+                                         </div>
+                                         <p className="text-4xl font-black text-[#E11D48]">{formatCurrency(order.total_price || 0)}</p>
+                                     </div>
+                                     <div className="bg-zinc-950/50 p-6 rounded-3xl mb-8 border border-white/5">
+                                         {order.items.map((it, i) => (
+                                             <div key={i} className="flex justify-between text-sm text-zinc-400 py-3 border-b border-white/5 last:border-0">
+                                                 <span className="font-medium uppercase tracking-wide">{it.quantity}x {it.name} <span className="text-white font-black">({it.selectedSize})</span></span>
+                                                 <span className="font-bold">{formatCurrency(it.price * it.quantity)}</span>
+                                             </div>
+                                         ))}
+                                     </div>
+                                     <div className="flex gap-6">
+                                         <button onClick={() => handleStatusUpdate(order.id, 'PAGAMENTO RECUSADO')} className="flex-1 py-5 bg-zinc-950 text-rose-500 rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-rose-950/30 border border-white/5 transition-colors">Recusar</button>
+                                         <button onClick={() => handleStatusUpdate(order.id, 'PAGO / EM PRODUÇÃO')} className="flex-1 py-5 bg-emerald-600 text-white rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-900/20 hover:scale-[1.02]">Confirmar Pagamento</button>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     )}
+                 </div>
+             )}
+
+             {adminTab === 'history' && (
+                 <div>
+                     {/* History Dashboard Stats (Replicating Image) */}
+                     <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-10">
+                        <div className="bg-zinc-900/40 border border-white/5 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-4">Total</span>
+                            <span className="text-3xl font-black text-white">{stats.totalOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-yellow-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-yellow-500 tracking-widest mb-4">Pendentes</span>
+                            <span className="text-3xl font-black text-yellow-500">{stats.pendingOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-blue-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-blue-500 tracking-widest mb-4">Produzindo</span>
+                            <span className="text-3xl font-black text-blue-500">{stats.producingOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-emerald-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-emerald-500 tracking-widest mb-4">Prontos</span>
+                            <span className="text-3xl font-black text-emerald-500">{stats.readyOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-rose-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest mb-4">Recusados</span>
+                            <span className="text-3xl font-black text-rose-500">{stats.refusedOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-rose-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest mb-4">Receita</span>
+                            <span className="text-2xl font-black text-[#E11D48]">{formatCurrency(stats.revenue)}</span>
+                        </div>
+                     </div>
+
+                     {/* Filters Bar */}
+                     <div className="flex gap-4 mb-8 overflow-x-auto pb-2">
+                        {['TODOS', 'EM PRODUÇÃO', 'PRODUZIDOS', 'RECUSADOS'].map(filter => (
+                            <button 
+                                key={filter}
+                                onClick={() => setHistoryFilter(filter)}
+                                className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${historyFilter === filter ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'bg-zinc-900/50 text-zinc-500 hover:text-white border border-white/5'}`}
+                            >
+                                {filter}
+                            </button>
+                        ))}
+                     </div>
+
+                     {/* Orders List (Layout from Image) */}
+                     <div className="grid gap-6">
+                         {orders
+                            .filter(o => {
+                                if (historyFilter === 'TODOS') return true;
+                                if (historyFilter === 'EM PRODUÇÃO') return o.status === 'PAGO / EM PRODUÇÃO';
+                                if (historyFilter === 'PRODUZIDOS') return o.status === 'PEDIDO PRODUZIDO';
+                                if (historyFilter === 'RECUSADOS') return o.status === 'PAGAMENTO RECUSADO';
+                                return true;
+                            })
+                            .map(order => (
+                             <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-8 group hover:bg-zinc-900/50 transition-colors">
+                                 {/* Card Header Row */}
+                                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+                                     <div className="flex items-center gap-4 mb-4 md:mb-0">
+                                         <h3 className="text-xl font-black text-white uppercase tracking-tight">{order.unit_name}</h3>
+                                         <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg tracking-wider border ${
+                                             order.status.includes('RECUSADO') ? 'bg-rose-950/30 border-rose-500/20 text-rose-500' :
+                                             order.status.includes('PRODUZIDO') ? 'bg-emerald-950/30 border-emerald-500/20 text-emerald-500' :
+                                             order.status.includes('PRODUÇÃO') ? 'bg-blue-950/30 border-blue-500/20 text-blue-500' :
+                                             'bg-zinc-800 border-zinc-700 text-zinc-500'
+                                         }`}>
+                                             {order.status === 'PAGO / EM PRODUÇÃO' ? 'PRODUZINDO' : order.status.replace('PEDIDO ', '')}
+                                         </span>
+                                     </div>
+                                     <div className="text-right">
+                                         <p className="text-3xl font-black text-[#E11D48] tracking-tighter">{formatCurrency(order.total_price || 0)}</p>
+                                         <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mt-1">PIX</p>
+                                     </div>
+                                 </div>
+
+                                 {/* Metadata Row */}
+                                 <div className="space-y-1 mb-8">
+                                     <p className="text-sm text-zinc-400 font-medium">{order.user_email}</p>
+                                     <p className="text-[10px] text-zinc-600 uppercase font-bold tracking-wider">
+                                         PEDIDO #{order.id.slice(0,8).toUpperCase()} • {new Date(order.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}, {new Date(order.created_at).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
+                                     </p>
+                                 </div>
+
+                                 {/* Expandable Items Section */}
+                                 <div className="border-t border-white/5 pt-6">
+                                     <button 
+                                        onClick={() => setExpandedHistoryOrder(expandedHistoryOrder === order.id ? null : order.id)}
+                                        className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors"
+                                     >
+                                         {expandedHistoryOrder === order.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                         VER {order.items.length} ITEM(S)
+                                     </button>
+
+                                     {expandedHistoryOrder === order.id && (
+                                         <motion.div 
+                                            initial={{ opacity: 0, height: 0 }} 
+                                            animate={{ opacity: 1, height: 'auto' }} 
+                                            className="mt-6 space-y-3"
+                                         >
+                                             {order.items.map((item, idx) => (
+                                                 <div key={idx} className="flex justify-between items-center bg-zinc-950/50 p-4 rounded-xl border border-white/5">
+                                                     <div className="flex items-center gap-4">
+                                                         <div className="w-10 h-10 bg-zinc-900 rounded-lg overflow-hidden">
+                                                             <img src={item.image_url} className="w-full h-full object-cover opacity-60"/>
+                                                         </div>
+                                                         <div>
+                                                             <p className="text-xs font-black text-white uppercase">{item.name}</p>
+                                                             <p className="text-[10px] text-zinc-500 font-bold uppercase">TAM: {item.selectedSize} • QTD: {item.quantity}</p>
+                                                         </div>
+                                                     </div>
+                                                     <p className="text-sm font-black text-zinc-400">{formatCurrency(item.price * item.quantity)}</p>
+                                                 </div>
+                                             ))}
+                                         </motion.div>
+                                     )}
+                                 </div>
+
+                                 {/* Validation Footer */}
+                                 {order.status !== 'AGUARDANDO VALIDAÇÃO' && (
+                                     <div className="mt-6 pt-4 border-t border-white/5 flex items-center gap-2 text-[10px] text-zinc-700 font-bold uppercase tracking-widest">
+                                         <Clock size={12}/> Validado em {new Date(order.created_at).toLocaleDateString()}
+                                     </div>
+                                 )}
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             )}
+
+             {adminTab === 'users' && (
+                 <div>
+                     <h3 className="flex items-center gap-3 text-2xl font-black uppercase text-white mb-8"><UsersIcon className="text-[#E11D48]" size={28}/> Controle de Acessos</h3>
+                     <div className="space-y-4">
+                         {usersList.map(u => (
+                             <div key={u.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 flex items-center justify-between group hover:border-white/10 transition-colors hover:bg-zinc-900/50">
+                                 <div className="flex items-center gap-8">
+                                     <div className="w-16 h-16 bg-rose-900/20 rounded-2xl flex items-center justify-center text-[#E11D48] font-black text-2xl shadow-inner shadow-rose-900/30">
+                                         {u.unit_name?.charAt(0) || 'U'}
+                                     </div>
+                                     <div>
+                                         <h4 className="text-lg font-black text-white uppercase mb-1">{u.unit_name}</h4>
+                                         <div className="flex gap-3">
+                                             <span className="bg-zinc-950 border border-white/5 px-3 py-1 rounded-lg text-[10px] text-zinc-500 uppercase font-black tracking-widest">{u.network_tag}</span>
+                                             <span className="bg-zinc-950 border border-white/5 px-3 py-1 rounded-lg text-[10px] text-zinc-500 uppercase font-black tracking-widest">{u.email}</span>
+                                         </div>
+                                     </div>
+                                 </div>
+                                 <div className="flex items-center gap-6">
+                                     <span className="bg-emerald-900/20 text-emerald-500 border border-emerald-500/20 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.15em]">
+                                         {u.role === 'admin' ? 'GESTOR' : 'FRANQUEADO'}
+                                     </span>
+                                     <button onClick={() => handleDeleteUser(u.id)} className="w-12 h-12 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-600 hover:text-rose-500 hover:bg-rose-900/20 transition-all border border-white/5 hover:border-rose-500/30">
+                                         <Trash2 size={20} />
+                                     </button>
+                                 </div>
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             )}
+         </div>
+      </div>
+    );
+  }
+
+  // --- CLIENT PANEL ---
+  return (
+    <div className="min-h-screen bg-[#09090b] text-zinc-100 font-['Inter']">
+       <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
+       
+       {/* Header from Screenshot */}
+       <header className="sticky top-0 z-50 bg-[#09090b]/80 backdrop-blur-md border-b border-white/5">
+           <div className="w-full max-w-[96%] mx-auto px-6 py-5 flex justify-between items-center">
+               <div className="flex items-center gap-6">
+                   <Logo />
+                   <div className="bg-zinc-900/50 border border-white/10 rounded-full px-5 py-2 flex items-center gap-3">
+                       <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse"></div>
+                       <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-300">
+                           {currentUser.network_tag.toUpperCase()} <span className="text-zinc-600 mx-2">/</span> {currentUser.unit_name.toUpperCase()}
+                       </span>
+                   </div>
+               </div>
+               <div className="flex items-center gap-6 text-zinc-400">
+                   {/* Notifications Button */}
+                   <div className="relative">
+                       <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="hover:text-white transition-colors relative">
+                           <Bell size={20}/>
+                           {orders.length > 0 && orders[0].status.includes('PRODUZIDO') && (
+                               <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full"></span>
+                           )}
+                       </button>
+                       <AnimatePresence>
+                           {isNotificationsOpen && (
+                               <motion.div initial={{opacity: 0, y: 10}} animate={{opacity: 1, y: 0}} exit={{opacity: 0, y: 10}} className="absolute top-12 right-0 w-80 bg-[#09090b] border border-white/10 rounded-2xl shadow-2xl p-6 z-50">
+                                   <h3 className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest mb-4">Notificações</h3>
+                                   {orders.length > 0 ? (
+                                       <div className="flex items-start gap-4 p-4 bg-zinc-900/50 rounded-xl border border-white/5">
+                                           <div className={`w-8 h-8 rounded-full flex items-center justify-center ${orders[0].status.includes('PRODUZIDO') ? 'bg-emerald-500/10 text-emerald-500' : 'bg-zinc-800 text-zinc-500'}`}>
+                                               {orders[0].status.includes('PRODUZIDO') ? <CheckCircle2 size={16}/> : <Clock size={16}/>}
+                                           </div>
+                                           <div>
+                                               <p className="text-sm font-bold text-white mb-1">Última compra</p>
+                                               <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">{orders[0].status}</p>
+                                           </div>
+                                       </div>
+                                   ) : (
+                                       <p className="text-zinc-500 text-xs text-center py-4">Nenhuma notificação</p>
+                                   )}
+                               </motion.div>
+                           )}
+                       </AnimatePresence>
+                   </div>
+                   
+                   {/* History Button */}
+                   <button onClick={() => setIsHistoryModalOpen(true)} className="hover:text-white transition-colors"><List size={20}/></button>
+                   
+                   <button onClick={() => setIsCartOpen(true)} className="relative hover:text-white transition-colors">
+                       <ShoppingCart size={20}/>
+                       {cart.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#E11D48] rounded-full text-[9px] flex items-center justify-center font-bold text-white shadow-lg shadow-rose-900">{cart.length}</span>}
+                   </button>
+                   <button onClick={() => setCurrentUser(null)} className="hover:text-white transition-colors"><LogOut size={20}/></button>
+               </div>
+           </div>
+       </header>
+
+       <main className="w-full max-w-[96%] mx-auto px-6 py-16">
+           {/* Catalog Title */}
+           <div className="mb-12 mt-4">
+               <h1 className="text-4xl font-black uppercase text-white tracking-tight mb-2">Catálogo Oficial</h1>
+               <p className="text-[11px] font-bold uppercase text-zinc-500 tracking-[0.3em]">Selecione os uniformes para sua unidade</p>
+           </div>
+
+           {/* Product Grid - Matching Screenshot Exact Layout */}
+           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5 gap-8 mb-24">
+               {products.filter(p => p.network_tag === '*' || p.network_tag === currentUser.network_tag).map(p => (
+                   <div key={p.id} className="group relative bg-zinc-950 rounded-[32px] overflow-hidden border border-white/5 hover:border-white/20 transition-all duration-300">
+                       {/* Image Area - Tall */}
+                       <div className="h-[320px] relative">
+                           <img src={p.image_url} className="w-full h-full object-cover"/>
+                           {/* Category Badge */}
+                           <div className="absolute top-4 right-4 bg-zinc-900/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
+                               <span className="text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2"><Tag size={10} className="text-[#E11D48]"/> {p.category}</span>
+                           </div>
+                       </div>
+                       
+                       {/* Bottom Content Area - Dark/Black */}
+                       <div className="p-6 bg-zinc-950 border-t border-white/5 relative">
+                           <h3 className="text-sm font-black text-white uppercase mb-1 tracking-wide">{p.name}</h3>
+                           <p className="text-xl font-black text-[#E11D48]">{formatCurrency(p.price)}</p>
+                           
+                           {/* Hover Action */}
+                           <div className="absolute inset-0 bg-zinc-950/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10">
+                               <button 
+                                  onClick={() => { setDetailsModalOpenId(p.id); setActiveModalImage(p.image_url); }}
+                                  className="bg-white text-black px-6 py-3 rounded-full font-black uppercase text-[10px] tracking-widest hover:scale-105 transition-transform"
+                               >
+                                   Ver Detalhes
+                               </button>
+                           </div>
+                       </div>
+                   </div>
+               ))}
+           </div>
+
+           {/* Orders Section - Reused Premium Style */}
+           <div>
+               <h2 className="text-3xl font-black uppercase text-white mb-10 pl-4 border-l-4 border-[#E11D48]">Meus Pedidos Recentes</h2>
+               <div className="space-y-6">
+                   {orders.map(o => (
+                       <div key={o.id} className="bg-zinc-900 border border-white/5 rounded-[40px] p-10 flex items-center justify-between group hover:border-white/10 transition-colors hover:bg-zinc-900/80">
+                           <div>
+                               <p className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em] mb-3">Pedido #{o.id.slice(0,8)}</p>
+                               <div className="flex items-center gap-4">
+                                   <p className="text-white font-black text-lg">{o.items.length} Item(s)</p>
+                                   <div className="h-1 w-1 bg-zinc-700 rounded-full"></div>
+                                   <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                       o.status.includes('PRODUZIDO') ? 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/20' : 
+                                       o.status.includes('PRODUÇÃO') ? 'bg-blue-500/20 text-blue-500 border border-blue-500/20' : 
+                                       o.status.includes('RECUSADO') ? 'bg-rose-500/20 text-rose-500 border border-rose-500/20' :
+                                       'bg-yellow-500/20 text-yellow-500 border border-yellow-500/20'
+                                   }`}>
+                                       {o.status === 'AGUARDANDO VALIDAÇÃO' ? 'AGUARDANDO APROVAÇÃO' : o.status}
+                                   </span>
+                               </div>
+                           </div>
+                           <p className="text-4xl font-black text-[#E11D48]">{formatCurrency(o.total_price || 0)}</p>
+                       </div>
+                   ))}
+               </div>
+           </div>
+       </main>
+
+       {/* Floating Whatsapp Button */}
+       <a 
+           href="https://wa.me/551732167854" 
+           target="_blank" 
+           rel="noopener noreferrer" 
+           className="fixed bottom-6 right-6 z-[100] w-14 h-14 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-lg shadow-emerald-500/30 hover:scale-110 transition-transform hover:bg-emerald-400"
+       >
+           <MessageCircle size={28} />
+       </a>
+
+       {/* Client History Modal */}
+       <AnimatePresence>
+           {isHistoryModalOpen && (
+               <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 backdrop-blur-md">
+                   <motion.div initial={{scale: 0.95, opacity: 0}} animate={{scale: 1, opacity: 1}} exit={{scale: 0.95, opacity: 0}} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-2xl w-full p-8 relative overflow-hidden flex flex-col max-h-[85vh]">
+                        <div className="flex justify-between items-center mb-8">
+                             <div className="flex items-center gap-3">
+                                 <div className="w-10 h-10 bg-[#E11D48]/20 rounded-xl flex items-center justify-center text-[#E11D48]">
+                                     <History size={20}/>
+                                 </div>
+                                 <h2 className="text-2xl font-black uppercase text-white tracking-tight">Meu Histórico</h2>
+                             </div>
+                             <button onClick={() => setIsHistoryModalOpen(false)} className="text-zinc-500 hover:text-white transition-colors"><X/></button>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                             {orders.length === 0 && (
+                                 <div className="text-center py-20 opacity-50">
+                                     <History size={48} className="mx-auto mb-4 text-zinc-600"/>
+                                     <p className="text-zinc-500 font-bold uppercase tracking-widest">Nenhum pedido no histórico</p>
+                                 </div>
+                             )}
+                             {orders.map(order => (
+                                 <div key={order.id} className="bg-zinc-900 border border-white/5 rounded-3xl p-6">
+                                     <div className="flex justify-between items-center mb-6 pb-6 border-b border-white/5">
+                                         <div>
+                                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">ID</p>
+                                             <p className="text-sm font-black text-white">#{order.id.slice(0,8).toUpperCase()}</p>
+                                         </div>
+                                         <div className="text-right">
+                                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Data</p>
+                                             <p className="text-sm font-black text-white">{new Date(order.created_at).toLocaleDateString()}</p>
+                                         </div>
+                                     </div>
+                                     <div className="space-y-3 mb-6">
+                                         {order.items.map((item, i) => (
+                                             <div key={i} className="flex justify-between text-xs">
+                                                 <span className="text-zinc-300 font-bold"><span className="bg-zinc-800 px-2 py-0.5 rounded text-zinc-500 mr-2">{item.quantity}x</span> {item.name} ({item.selectedSize})</span>
+                                                 <span className="text-zinc-500">{formatCurrency(item.price * item.quantity)}</span>
+                                             </div>
+                                         ))}
+                                     </div>
+                                     <div className="flex justify-between items-center pt-4 border-t border-white/5">
+                                         <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border ${
+                                              order.status.includes('PRODUZIDO') ? 'text-yellow-500 border-yellow-500/20 bg-yellow-500/10' : 
+                                              order.status.includes('PRODUÇÃO') ? 'text-blue-500 border-blue-500/20 bg-blue-500/10' :
+                                              order.status.includes('RECUSADO') ? 'text-rose-500 border-rose-500/20 bg-rose-500/10' :
+                                              'text-zinc-500 border-zinc-700 bg-zinc-800'
+                                         }`}>
+                                             {order.status}
+                                         </span>
+                                         <span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || 0)}</span>
+                                     </div>
+                                 </div>
+                             ))}
+                        </div>
+
+                        <div className="mt-6 pt-6 border-t border-white/10">
+                             <button onClick={() => setIsHistoryModalOpen(false)} className="w-full bg-zinc-900 hover:bg-zinc-800 text-white py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] transition-colors">Voltar</button>
+                        </div>
+                   </motion.div>
+               </div>
+           )}
+       </AnimatePresence>
+
+       {/* Product Detail Modal Logic */}
+       <AnimatePresence>
+           {detailsModalOpenId && (() => {
+               const p = products.find(prod => prod.id === detailsModalOpenId);
+               if(!p) return null;
+               const selectedSize = clientSelectedSizes[p.id];
+               const allImages = [p.image_url, ...(p.additional_images || [])].filter(Boolean);
+
+               return (
+                   <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-8">
+                       <motion.div initial={{y: 100, opacity: 0}} animate={{y: 0, opacity: 1}} exit={{y: 100, opacity: 0}} className="bg-zinc-950 border border-white/10 rounded-[48px] max-w-5xl w-full overflow-hidden flex flex-col md:flex-row shadow-2xl shadow-black">
+                           <div className="md:w-1/2 h-[600px] md:h-auto bg-zinc-900 relative flex flex-col">
+                               <div className="flex-1 relative">
+                                   <img src={activeModalImage || p.image_url} className="w-full h-full object-cover"/>
+                                   <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-50 pointer-events-none"></div>
+                               </div>
+                               {/* Image Grid */}
+                               {allImages.length > 1 && (
+                                   <div className="p-4 grid grid-cols-4 gap-3 bg-zinc-950/50 backdrop-blur-md absolute bottom-0 w-full">
+                                       {allImages.map((img, idx) => (
+                                           <div 
+                                                key={idx} 
+                                                onClick={() => setActiveModalImage(img)}
+                                                className={`aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${activeModalImage === img ? 'border-[#E11D48] scale-105' : 'border-transparent opacity-70 hover:opacity-100'}`}
+                                           >
+                                               <img src={img} className="w-full h-full object-cover"/>
+                                           </div>
+                                       ))}
+                                   </div>
+                               )}
+                           </div>
+                           <div className="md:w-1/2 p-12 md:p-16 flex flex-col justify-between overflow-y-auto max-h-[90vh] custom-scrollbar">
+                               <div>
+                                   <div className="flex justify-between items-start mb-10">
+                                       <div>
+                                           <h2 className="text-3xl font-black text-white uppercase mb-4 leading-tight">{p.name}</h2>
+                                           <p className="text-4xl font-black text-[#E11D48]">{formatCurrency(p.price)}</p>
+                                       </div>
+                                       <button onClick={() => setDetailsModalOpenId(null)} className="p-4 bg-zinc-900 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"><X/></button>
+                                   </div>
+
+                                   {/* Description in Modal */}
+                                   <div className="mb-8">
+                                       <p className="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-[0.2em]">Sobre o Produto</p>
+                                       <p className="text-zinc-400 text-sm leading-relaxed mb-6">{p.description || "Sem descrição disponível."}</p>
+                                       
+                                       <div className="flex gap-4">
+                                            <div className="flex items-center gap-3 bg-zinc-900 px-4 py-3 rounded-xl border border-white/5">
+                                                <Clock size={16} className="text-[#E11D48]"/>
+                                                <div>
+                                                    <p className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider">Prazo de Produção</p>
+                                                    <p className="text-xs font-black text-white">{p.production_days} Dias Úteis</p>
+                                                </div>
+                                            </div>
+                                             <div className="flex items-center gap-3 bg-zinc-900 px-4 py-3 rounded-xl border border-white/5">
+                                                <Package size={16} className="text-[#E11D48]"/>
+                                                <div>
+                                                    <p className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider">Pedido Mínimo</p>
+                                                    <p className="text-xs font-black text-white">{p.min_order} Unidades</p>
+                                                </div>
+                                            </div>
+                                       </div>
+                                   </div>
+
+                                   <div className="mb-10">
+                                       <p className="text-[10px] font-bold uppercase text-zinc-500 mb-4 tracking-[0.2em]">Selecione o Tamanho</p>
+                                       <div className="flex flex-wrap gap-3">
+                                           {(p.available_sizes || []).map(s => (
+                                               <button 
+                                                 key={s}
+                                                 onClick={() => setClientSelectedSizes({...clientSelectedSizes, [p.id]: s})}
+                                                 className={`w-14 h-14 rounded-2xl flex items-center justify-center text-sm font-black transition-all ${selectedSize === s ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/40 scale-110' : 'bg-zinc-900 text-zinc-500 hover:text-white hover:bg-zinc-800'}`}
+                                               >
+                                                   {s}
+                                               </button>
+                                           ))}
+                                       </div>
+                                   </div>
+                               </div>
+                               
+                               <div>
+                                   <button 
+                                      onClick={() => {
+                                          if(!selectedSize) return showToast("Selecione um tamanho", "error");
+                                          setCart([...cart, {...p, selectedSize, quantity: p.min_order}]);
+                                          setDetailsModalOpenId(null);
+                                          showToast("Adicionado ao carrinho");
+                                      }}
+                                      className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs tracking-[0.2em] hover:bg-zinc-200 transition-transform hover:scale-[1.02]"
+                                   >
+                                       Adicionar ao Pedido ({p.min_order} UN)
+                                   </button>
+                                   <p className="text-center text-[10px] text-zinc-600 mt-4 font-bold uppercase tracking-[0.2em]">Pedido Mínimo Obrigatório</p>
+                               </div>
+                           </div>
+                       </motion.div>
+                   </div>
+               );
+           })()}
+       </AnimatePresence>
+
+       {/* Cart Drawer */}
+       <AnimatePresence>
+          {isCartOpen && (
+              <motion.div initial={{x: '100%'}} animate={{x: 0}} exit={{x: '100%'}} className="fixed top-0 right-0 h-full w-full max-w-md bg-[#09090b] z-[150] flex flex-col shadow-2xl shadow-black/80">
+                  <div className="p-8 flex justify-between items-center">
+                      <h2 className="text-3xl font-black uppercase text-white tracking-wide">MINHA LISTA</h2>
+                      <button onClick={() => setIsCartOpen(false)}><X className="text-zinc-500 hover:text-white transition-colors" size={24}/></button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-8 space-y-4">
+                      {cart.length === 0 && (
+                          <div className="flex flex-col items-center justify-center h-full opacity-30">
+                              <ShoppingCart size={48} className="mb-4"/>
+                              <p className="text-center text-zinc-400 uppercase text-xs font-black tracking-[0.2em]">Carrinho Vazio</p>
+                          </div>
+                      )}
+                      {cart.map((item, idx) => (
+                          <div key={idx} className="relative bg-zinc-900 p-4 rounded-3xl flex gap-4 border border-white/5 items-center">
+                              <button 
+                                onClick={() => { const n = [...cart]; n.splice(idx, 1); setCart(n); }}
+                                className="absolute top-4 right-4 text-zinc-600 hover:text-white transition-colors"
+                              >
+                                  <X size={16}/>
+                              </button>
+                              <img src={item.image_url} className="w-24 h-24 rounded-2xl object-cover bg-zinc-950"/>
+                              <div className="flex-1 pr-6">
+                                  <h4 className="text-xs font-black text-white uppercase mb-1 leading-tight tracking-wide">{item.name}</h4>
+                                  <p className="text-[10px] text-zinc-500 uppercase font-bold mb-3 tracking-wider">TAM: {item.selectedSize}</p>
+                                  <div className="flex items-center gap-3">
+                                      <button onClick={() => { const n = [...cart]; n[idx].quantity--; n[idx].quantity < item.min_order ? setCart(cart.filter((_,i)=>i!==idx)) : setCart(n); }} className="w-8 h-8 flex items-center justify-center bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors"><Minus size={14}/></button>
+                                      <span className="text-lg font-black text-[#E11D48] w-6 text-center">{item.quantity}</span>
+                                      <button onClick={() => { const n = [...cart]; n[idx].quantity++; setCart(n); }} className="w-8 h-8 flex items-center justify-center bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors"><Plus size={14}/></button>
+                                  </div>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+                  <div className="p-8 mt-auto">
+                      <div className="bg-zinc-900/50 p-6 rounded-3xl border border-white/5 mb-6">
+                          <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-3 block">FRETE (CEP)</label>
+                          <div className="flex gap-3">
+                              <input placeholder="00000-000" value={cep} onChange={e => setCep(e.target.value)} className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-6 py-4 text-white text-sm outline-none focus:border-[#E11D48] tracking-widest placeholder:text-zinc-600"/>
+                              <button onClick={calculateShipping} className="bg-[#E11D48] px-6 rounded-2xl text-xs font-black uppercase tracking-widest text-white hover:bg-rose-600 transition-colors">OK</button>
+                          </div>
+                          {shippingCost !== null && (
+                            <div className="mt-3 text-right">
+                                <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Valor: {formatCurrency(shippingCost)}</span>
+                            </div>
+                          )}
+                      </div>
+                      
+                      <div className="flex justify-between items-end mb-8 px-2">
+                          <span className="text-sm font-black text-white uppercase tracking-widest">TOTAL</span>
+                          <span className="text-3xl font-black text-[#E11D48] tracking-tight">{formatCurrency(cart.reduce((a,b)=>a+b.price*b.quantity,0) + (shippingCost || 0))}</span>
+                      </div>
+                      
+                      <div className="space-y-4">
+                          <button onClick={() => { if(shippingCost===null) return showToast("Calcule o frete", "error"); setIsCartOpen(false); setIsPaymentOpen(true); }} className="w-full bg-[#E11D48] hover:bg-rose-600 text-white py-5 rounded-3xl font-black uppercase text-xs tracking-[0.2em] shadow-lg shadow-rose-900/20 transition-all hover:scale-[1.02] flex items-center justify-center gap-3">
+                              <QrCode size={18}/> PAGAR PIX
+                          </button>
+                          <button onClick={handleWhatsAppQuote} className="w-full bg-zinc-900 border border-white/10 hover:bg-zinc-800 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-[0.15em] transition-all hover:border-white/20">
+                              ORÇAMENTO / DÚVIDAS VIA WHATSAPP
+                          </button>
+                      </div>
+                  </div>
+              </motion.div>
+          )}
+       </AnimatePresence>
+
+       {/* Payment Modal */}
+       {isPaymentOpen && (
+           <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-6 backdrop-blur-xl">
+               <div className="bg-zinc-950 border border-white/10 rounded-[48px] max-w-md w-full p-12 text-center relative overflow-hidden shadow-2xl">
+                   <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#E11D48] via-purple-500 to-indigo-500"></div>
+                   <QrCode size={64} className="text-[#E11D48] mx-auto mb-8 drop-shadow-[0_0_15px_rgba(225,29,72,0.5)]"/>
+                   <h2 className="text-3xl font-black uppercase text-white mb-3">Pagamento PIX</h2>
+                   <p className="text-zinc-500 text-xs mb-10 font-bold uppercase tracking-widest">Escaneie o QR Code abaixo para concluir</p>
+                   <div className="bg-white p-6 rounded-[32px] mb-10 mx-auto w-fit shadow-xl">
+                       <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getPixCode())}`} className="w-48 h-48"/>
+                   </div>
+                   <button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Copiado!"); }} className="w-full bg-zinc-900 text-zinc-300 py-5 rounded-2xl font-bold uppercase text-xs tracking-[0.15em] hover:text-white mb-4 flex items-center justify-center gap-3 border border-white/5 hover:bg-zinc-800 transition-colors"><Copy size={16}/> Copiar Código Pix</button>
+                   <button onClick={handleFinalize} className="w-full bg-[#E11D48] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-[0.15em] hover:bg-rose-600 shadow-lg shadow-rose-900/30 transition-transform hover:scale-[1.02]">Confirmar Pagamento</button>
+                   <button onClick={() => setIsPaymentOpen(false)} className="mt-8 text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] hover:text-white transition-colors">Cancelar Operação</button>
+               </div>
+           </div>
+       )}
+
+       {/* Success Modal */}
+       {isOrderSuccessOpen && (
+           <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 backdrop-blur-md">
+              <motion.div initial={{scale:0.9, opacity:0}} animate={{scale:1, opacity:1}} className="bg-zinc-950 border border-[#E11D48]/30 rounded-[56px] max-w-md w-full p-16 text-center relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-b from-[#E11D48]/10 to-transparent pointer-events-none"></div>
+                  <div className="w-24 h-24 bg-[#E11D48] rounded-full flex items-center justify-center mx-auto mb-8 text-white shadow-2xl shadow-rose-500/50">
+                      <CheckCircle2 size={48}/>
+                  </div>
+                  <h2 className="text-3xl font-black uppercase text-white mb-6">Pedido Recebido!</h2>
+                  <p className="text-zinc-500 text-sm mb-10 leading-relaxed font-medium">Seu pedido foi enviado para validação da central. Você será notificado assim que a produção iniciar.</p>
+                  <button onClick={() => setIsOrderSuccessOpen(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs tracking-[0.2em] hover:bg-zinc-200 transition-transform hover:scale-[1.02] shadow-xl">Voltar a Loja</button>
+              </motion.div>
+           </div>
+       )}
+    </div>
+  );
+}

@@ -1,11 +1,12 @@
 
-export type Size = 'P' | 'M' | 'G' | 'GG' | 'XG' | 'Único';
+export type Size = 'PP' | 'P' | 'M' | 'G' | 'GG' | 'XG' | 'G1' | 'G2' | 'Único';
 
 export interface Product {
   id: string;
   name: string;
   price: number;
   image_url: string; 
+  additional_images?: string[]; // Novas fotos extras (até 3)
   network_tag: string; 
   category: string;
   description?: string;
