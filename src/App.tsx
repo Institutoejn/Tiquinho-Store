@@ -6,11 +6,11 @@ import {
   LayoutGrid, List, History, Wallet, TrendingUp, PlusCircle, Tag, Check, ChevronDown, ChevronRight, Clock, MessageCircle, Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-// Ajuste de importação para sair da pasta src e buscar na raiz
+// Importações ajustadas para estrutura de pastas
 import { Product, CartItem, Size, User as UserType } from '../types';
 import { supabase } from '../supabaseClient';
 
-// --- PIX HELPER (REAL) ---
+// --- PIX HELPER ---
 class PixPayload {
   private merchantKey: string;
   private merchantName: string;
@@ -167,7 +167,7 @@ export default function App() {
     const initAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        // CORREÇÃO: Usando 'profiles' ao invés de 'users'
+        // CORREÇÃO CRÍTICA: Lendo de 'profiles' em vez de 'users'
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         if (profile) {
           setCurrentUser({ id: session.user.id, email: session.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
@@ -205,13 +205,13 @@ export default function App() {
 
     // Admin specific data
     if (currentUser.role === 'admin') {
-      // CORREÇÃO: Usando 'profiles' ao invés de 'users'
+      // CORREÇÃO CRÍTICA: Lendo de 'profiles'
       const { data: users } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
       if (users) {
         setUsersList(users);
-        const profs = users.filter(u => u.role !== 'admin');
+        const profs = users.filter((u: any) => u.role !== 'admin');
         setClientProfiles(profs);
-        setAvailableNetworks([...new Set(profs.map(u => u.network_tag))] as string[]);
+        setAvailableNetworks([...new Set(profs.map((u: any) => u.network_tag))] as string[]);
       }
     }
   };
@@ -275,7 +275,7 @@ export default function App() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email, password: formData.password });
       if (error) throw error;
-      // CORREÇÃO: Usando 'profiles'
+      // CORREÇÃO: Profiles
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
       if (!profile) throw new Error("Perfil não encontrado");
       setCurrentUser({ id: data.user.id, email: data.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
@@ -289,7 +289,7 @@ export default function App() {
       const { data, error } = await supabase.auth.signUp({ email: formData.email, password: formData.password });
       if (error) throw error;
       if (data.user) {
-         // CORREÇÃO: Usando 'profiles' e upsert correto
+         // CORREÇÃO CRÍTICA: Salvando em 'profiles'
          await supabase.from('profiles').upsert({
             id: data.user.id, email: formData.email, unit_name: formData.unit_name,
             network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag,
@@ -370,7 +370,7 @@ export default function App() {
   
   const handleDeleteUser = async (id: string) => {
       if(!confirm("Excluir usuário?")) return;
-      // CORREÇÃO: Usando 'profiles'
+      // CORREÇÃO: Profiles
       await supabase.from('profiles').delete().eq('id', id);
       fetchInitialData();
       showToast("Usuário excluído");
@@ -606,52 +606,4 @@ export default function App() {
          </div>
       </div>
     );
-  }
-
-  // --- CLIENT PANEL ---
-  return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 font-['Inter']">
-       <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
-       
-       <header className="sticky top-0 z-50 bg-[#09090b]/80 backdrop-blur-md border-b border-white/5">
-           <div className="w-full max-w-[96%] mx-auto px-6 py-5 flex justify-between items-center">
-               <div className="flex items-center gap-6"><Logo /><div className="bg-zinc-900/50 border border-white/10 rounded-full px-5 py-2 flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse"></div><span className="text-[11px] font-bold uppercase tracking-widest text-zinc-300">{currentUser.network_tag.toUpperCase()} <span className="text-zinc-600 mx-2">/</span> {currentUser.unit_name.toUpperCase()}</span></div></div>
-               <div className="flex items-center gap-6 text-zinc-400">
-                   <div className="relative">
-                       <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="hover:text-white transition-colors relative"><Bell size={20}/>{orders.length > 0 && !orders[0].status.includes('VALIDAÇÃO') && <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full"></span>}</button>
-                       <AnimatePresence>{isNotificationsOpen && (<motion.div initial={{opacity: 0, y: 10}} animate={{opacity: 1, y: 0}} exit={{opacity: 0, y: 10}} className="absolute top-12 right-0 w-80 bg-[#09090b] border border-white/10 rounded-2xl shadow-2xl p-6 z-50"><h3 className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest mb-4">Notificações</h3>{orders.slice(0,3).map(o => (<div key={o.id} className="flex items-start gap-4 p-4 bg-zinc-900/50 rounded-xl border border-white/5 mb-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center ${o.status.includes('PRODUZIDO') ? 'bg-emerald-500/10 text-emerald-500' : o.status.includes('PRODUÇÃO') ? 'bg-blue-500/10 text-blue-500' : 'bg-zinc-800 text-zinc-500'}`}>{o.status.includes('PRODUZIDO') ? <CheckCircle2 size={16}/> : <Clock size={16}/>}</div><div><p className="text-sm font-bold text-white mb-1">Pedido #{o.id.slice(0,4).toUpperCase()}</p><p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">{o.status}</p></div></div>))}{orders.length === 0 && <p className="text-zinc-500 text-xs text-center py-4">Nenhuma notificação</p>}</motion.div>)}</AnimatePresence>
-                   </div>
-                   <button onClick={() => setIsHistoryModalOpen(true)} className="hover:text-white transition-colors"><List size={20}/></button>
-                   <button onClick={() => setIsCartOpen(true)} className="relative hover:text-white transition-colors"><ShoppingCart size={20}/>{cart.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#E11D48] rounded-full text-[9px] flex items-center justify-center font-bold text-white shadow-lg shadow-rose-900">{cart.length}</span>}</button>
-                   <button onClick={() => setCurrentUser(null)} className="hover:text-white transition-colors"><LogOut size={20}/></button>
-               </div>
-           </div>
-       </header>
-
-       <main className="w-full max-w-[96%] mx-auto px-6 py-16">
-           <div className="mb-12 mt-4"><h1 className="text-4xl font-black uppercase text-white tracking-tight mb-2">Catálogo Oficial</h1><p className="text-[11px] font-bold uppercase text-zinc-500 tracking-[0.3em]">Selecione os uniformes para sua unidade</p></div>
-           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5 gap-8 mb-24">
-               {products.filter(p => p.network_tag === '*' || p.network_tag === currentUser.network_tag).map(p => (
-                   <div key={p.id} className="group relative bg-zinc-950 rounded-[32px] overflow-hidden border border-white/5 hover:border-white/20 transition-all duration-300">
-                       <div className="h-[320px] relative"><img src={p.image_url} className="w-full h-full object-cover"/><div className="absolute top-4 right-4 bg-zinc-900/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10"><span className="text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2"><Tag size={10} className="text-[#E11D48]"/> {p.category}</span></div></div>
-                       <div className="p-6 bg-zinc-950 border-t border-white/5 relative"><h3 className="text-sm font-black text-white uppercase mb-1 tracking-wide">{p.name}</h3><p className="text-xl font-black text-[#E11D48]">{formatCurrency(p.price)}</p><div className="absolute inset-0 bg-zinc-950/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10"><button onClick={() => { setDetailsModalOpenId(p.id); setActiveModalImage(p.image_url); }} className="bg-white text-black px-6 py-3 rounded-full font-black uppercase text-[10px] tracking-widest hover:scale-105 transition-transform">Ver Detalhes</button></div></div>
-                   </div>
-               ))}
-           </div>
-           <div><h2 className="text-3xl font-black uppercase text-white mb-10 pl-4 border-l-4 border-[#E11D48]">Meus Pedidos Recentes</h2><div className="space-y-6">{orders.slice(0,3).map(o => (<div key={o.id} className="bg-zinc-900 border border-white/5 rounded-[40px] p-10 flex items-center justify-between group hover:border-white/10 transition-colors hover:bg-zinc-900/80"><div><p className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em] mb-3">Pedido #{o.id.slice(0,8)}</p><div className="flex items-center gap-4"><p className="text-white font-black text-lg">{o.items.length} Item(s)</p><div className="h-1 w-1 bg-zinc-700 rounded-full"></div><span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${o.status.includes('PRODUZIDO') ? 'bg-emerald-500/20 text-emerald-500' : o.status.includes('PRODUÇÃO') ? 'bg-blue-500/20 text-blue-500' : 'bg-yellow-500/20 text-yellow-500'}`}>{o.status}</span></div></div><p className="text-4xl font-black text-[#E11D48]">{formatCurrency(o.total_price || 0)}</p></div>))}</div></div>
-       </main>
-
-       <a href="https://wa.me/551732167854" target="_blank" className="fixed bottom-6 right-6 z-[100] w-14 h-14 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-lg shadow-emerald-500/30 hover:scale-110 transition-transform hover:bg-emerald-400"><MessageCircle size={28} /></a>
-
-       <AnimatePresence>{isHistoryModalOpen && (<div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 backdrop-blur-md"><motion.div initial={{scale: 0.95, opacity: 0}} animate={{scale: 1, opacity: 1}} exit={{scale: 0.95, opacity: 0}} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-2xl w-full p-8 relative overflow-hidden flex flex-col max-h-[85vh]"><div className="flex justify-between items-center mb-8"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-[#E11D48]/20 rounded-xl flex items-center justify-center text-[#E11D48]"><History size={20}/></div><h2 className="text-2xl font-black uppercase text-white tracking-tight">Meu Histórico</h2></div><button onClick={() => setIsHistoryModalOpen(false)} className="text-zinc-500 hover:text-white transition-colors"><X/></button></div><div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">{orders.map(order => (<div key={order.id} className="bg-zinc-900 border border-white/5 rounded-3xl p-6"><div className="flex justify-between items-center mb-6 pb-6 border-b border-white/5"><div><p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">ID</p><p className="text-sm font-black text-white">#{order.id.slice(0,8).toUpperCase()}</p></div><div className="text-right"><p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Data</p><p className="text-sm font-black text-white">{new Date(order.created_at).toLocaleDateString()}</p></div></div><div className="space-y-3 mb-6">{order.items.map((item, i) => (<div key={i} className="flex justify-between text-xs"><span className="text-zinc-300 font-bold"><span className="bg-zinc-800 px-2 py-0.5 rounded text-zinc-500 mr-2">{item.quantity}x</span> {item.name} ({item.selectedSize})</span><span className="text-zinc-500">{formatCurrency(item.price * item.quantity)}</span></div>))}</div><div className="flex justify-between items-center pt-4 border-t border-white/5"><span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border ${order.status.includes('PRODUZIDO') ? 'text-yellow-500 border-yellow-500/20 bg-yellow-500/10' : order.status.includes('PRODUÇÃO') ? 'text-blue-500 border-blue-500/20 bg-blue-500/10' : 'text-zinc-500 border-zinc-700 bg-zinc-800'}`}>{order.status}</span><span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || 0)}</span></div></div>))}</div><div className="mt-6 pt-6 border-t border-white/10"><button onClick={() => setIsHistoryModalOpen(false)} className="w-full bg-zinc-900 hover:bg-zinc-800 text-white py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] transition-colors">Voltar</button></div></motion.div></div>)}</AnimatePresence>
-
-       <AnimatePresence>{detailsModalOpenId && (() => { const p = products.find(prod => prod.id === detailsModalOpenId); if(!p) return null; const selectedSize = clientSelectedSizes[p.id]; const allImages = [p.image_url, ...(p.additional_images || [])].filter(Boolean); return (<div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-8"><motion.div initial={{y: 100, opacity: 0}} animate={{y: 0, opacity: 1}} exit={{y: 100, opacity: 0}} className="bg-zinc-950 border border-white/10 rounded-[48px] max-w-5xl w-full overflow-hidden flex flex-col md:flex-row shadow-2xl shadow-black"><div className="md:w-1/2 h-[600px] md:h-auto bg-zinc-900 relative flex flex-col"><div className="flex-1 relative"><img src={activeModalImage || p.image_url} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-50 pointer-events-none"></div></div>{allImages.length > 1 && (<div className="p-4 grid grid-cols-4 gap-3 bg-zinc-950/50 backdrop-blur-md absolute bottom-0 w-full">{allImages.map((img, idx) => (<div key={idx} onClick={() => setActiveModalImage(img)} className={`aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${activeModalImage === img ? 'border-[#E11D48] scale-105' : 'border-transparent opacity-70 hover:opacity-100'}`}><img src={img} className="w-full h-full object-cover"/></div>))}</div>)}</div><div className="md:w-1/2 p-12 md:p-16 flex flex-col justify-between overflow-y-auto max-h-[90vh] custom-scrollbar"><div><div className="flex justify-between items-start mb-10"><div><h2 className="text-3xl font-black text-white uppercase mb-4 leading-tight">{p.name}</h2><p className="text-4xl font-black text-[#E11D48]">{formatCurrency(p.price)}</p></div><button onClick={() => setDetailsModalOpenId(null)} className="p-4 bg-zinc-900 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"><X/></button></div><div className="mb-8"><p className="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-[0.2em]">Sobre o Produto</p><p className="text-zinc-400 text-sm leading-relaxed mb-6">{p.description || "Sem descrição disponível."}</p><div className="flex gap-4"><div className="flex items-center gap-3 bg-zinc-900 px-4 py-3 rounded-xl border border-white/5"><Clock size={16} className="text-[#E11D48]"/><div><p className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider">Prazo de Produção</p><p className="text-xs font-black text-white">{p.production_days} Dias Úteis</p></div></div><div className="flex items-center gap-3 bg-zinc-900 px-4 py-3 rounded-xl border border-white/5"><Package size={16} className="text-[#E11D48]"/><div><p className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider">Pedido Mínimo</p><p className="text-xs font-black text-white">{p.min_order} Unidades</p></div></div></div></div><div className="mb-10"><p className="text-[10px] font-bold uppercase text-zinc-500 mb-4 tracking-[0.2em]">Selecione o Tamanho</p><div className="flex flex-wrap gap-3">{(p.available_sizes || []).map((s: string) => (<button key={s} onClick={() => setClientSelectedSizes({...clientSelectedSizes, [p.id]: s as Size})} className={`w-14 h-14 rounded-2xl flex items-center justify-center text-sm font-black transition-all ${selectedSize === s ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/40 scale-110' : 'bg-zinc-900 text-zinc-500 hover:text-white hover:bg-zinc-800'}`}>{s}</button>))}</div></div></div><div><button onClick={() => { if(!selectedSize) return showToast("Selecione um tamanho", "error"); setCart([...cart, {...p, selectedSize, quantity: p.min_order}]); setDetailsModalOpenId(null); showToast("Adicionado ao carrinho"); }} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs tracking-[0.2em] hover:bg-zinc-200 transition-transform hover:scale-[1.02]">Adicionar ao Pedido ({p.min_order} UN)</button><p className="text-center text-[10px] text-zinc-600 mt-4 font-bold uppercase tracking-[0.2em]">Pedido Mínimo Obrigatório</p></div></div></motion.div></div>); })()}</AnimatePresence>
-
-       <AnimatePresence>{isCartOpen && (<motion.div initial={{x: '100%'}} animate={{x: 0}} exit={{x: '100%'}} className="fixed top-0 right-0 h-full w-full max-w-md bg-[#09090b] z-[150] flex flex-col shadow-2xl shadow-black/80"><div className="p-8 flex justify-between items-center"><h2 className="text-3xl font-black uppercase text-white tracking-wide">MINHA LISTA</h2><button onClick={() => setIsCartOpen(false)}><X className="text-zinc-500 hover:text-white transition-colors" size={24}/></button></div><div className="flex-1 overflow-y-auto px-8 space-y-4">{cart.length === 0 && (<div className="flex flex-col items-center justify-center h-full opacity-30"><ShoppingCart size={48} className="mb-4"/><p className="text-center text-zinc-400 uppercase text-xs font-black tracking-[0.2em]">Carrinho Vazio</p></div>)}{cart.map((item, idx) => (<div key={idx} className="relative bg-zinc-900 p-4 rounded-3xl flex gap-4 border border-white/5 items-center"><button onClick={() => { const n = [...cart]; n.splice(idx, 1); setCart(n); }} className="absolute top-4 right-4 text-zinc-600 hover:text-white transition-colors"><X size={16}/></button><img src={item.image_url} className="w-24 h-24 rounded-2xl object-cover bg-zinc-950"/><div className="flex-1 pr-6"><h4 className="text-xs font-black text-white uppercase mb-1 leading-tight tracking-wide">{item.name}</h4><p className="text-[10px] text-zinc-500 uppercase font-bold mb-3 tracking-wider">TAM: {item.selectedSize}</p><div className="flex items-center gap-3"><button onClick={() => { const n = [...cart]; n[idx].quantity--; n[idx].quantity < item.min_order ? setCart(cart.filter((_,i)=>i!==idx)) : setCart(n); }} className="w-8 h-8 flex items-center justify-center bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors"><Minus size={14}/></button><span className="text-lg font-black text-[#E11D48] w-6 text-center">{item.quantity}</span><button onClick={() => { const n = [...cart]; n[idx].quantity++; setCart(n); }} className="w-8 h-8 flex items-center justify-center bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors"><Plus size={14}/></button></div></div></div>))}</div><div className="p-8 mt-auto"><div className="bg-zinc-900/50 p-6 rounded-3xl border border-white/5 mb-6"><label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-3 block">FRETE (CEP)</label><div className="flex gap-3"><input placeholder="00000-000" value={cep} onChange={e => setCep(e.target.value)} className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-6 py-4 text-white text-sm outline-none focus:border-[#E11D48] tracking-widest placeholder:text-zinc-600"/><button onClick={calculateShipping} className="bg-[#E11D48] px-6 rounded-2xl text-xs font-black uppercase tracking-widest text-white hover:bg-rose-600 transition-colors">OK</button></div></div><div className="flex justify-between items-end mb-8 px-2"><span className="text-sm font-black text-white uppercase tracking-widest">TOTAL</span><span className="text-3xl font-black text-[#E11D48] tracking-tight">{formatCurrency(cart.reduce((a,b)=>a+b.price*b.quantity,0) + (shippingCost || 0))}</span></div><div className="space-y-4"><button onClick={() => { if(shippingCost===null) return showToast("Calcule o frete", "error"); setIsCartOpen(false); setIsPaymentOpen(true); }} className="w-full bg-[#E11D48] hover:bg-rose-600 text-white py-5 rounded-3xl font-black uppercase text-xs tracking-[0.2em] shadow-lg shadow-rose-900/20 transition-all hover:scale-[1.02] flex items-center justify-center gap-3"><QrCode size={18}/> PAGAR PIX</button><button onClick={handleWhatsAppQuote} className="w-full bg-zinc-900 border border-white/10 hover:bg-zinc-800 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-[0.15em] transition-all hover:border-white/20">ORÇAMENTO / DÚVIDAS VIA WHATSAPP</button></div></div></motion.div>)}</AnimatePresence>
-
-       {isPaymentOpen && (<div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-6 backdrop-blur-xl"><div className="bg-zinc-950 border border-white/10 rounded-[48px] max-w-md w-full p-12 text-center relative overflow-hidden shadow-2xl"><div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#E11D48] via-purple-500 to-indigo-500"></div><QrCode size={64} className="text-[#E11D48] mx-auto mb-8 drop-shadow-[0_0_15px_rgba(225,29,72,0.5)]"/><h2 className="text-3xl font-black uppercase text-white mb-3">Pagamento PIX</h2><p className="text-zinc-500 text-xs mb-10 font-bold uppercase tracking-widest">Escaneie o QR Code abaixo para concluir</p><div className="bg-white p-6 rounded-[32px] mb-10 mx-auto w-fit shadow-xl"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getPixCode())}`} className="w-48 h-48"/></div><button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Copiado!"); }} className="w-full bg-zinc-900 text-zinc-300 py-5 rounded-2xl font-bold uppercase text-xs tracking-[0.15em] hover:text-white mb-4 flex items-center justify-center gap-3 border border-white/5 hover:bg-zinc-800 transition-colors"><Copy size={16}/> Copiar Código Pix</button><button onClick={handleFinalize} className="w-full bg-[#E11D48] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-[0.15em] hover:bg-rose-600 shadow-lg shadow-rose-900/30 transition-transform hover:scale-[1.02]">Confirmar Pagamento</button><button onClick={() => setIsPaymentOpen(false)} className="mt-8 text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] hover:text-white transition-colors">Cancelar Operação</button></div></div>)}
-
-       {isOrderSuccessOpen && (<div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 backdrop-blur-md"><motion.div initial={{scale:0.9, opacity:0}} animate={{scale:1, opacity:1}} className="bg-zinc-950 border border-[#E11D48]/30 rounded-[56px] max-w-md w-full p-16 text-center relative overflow-hidden"><div className="absolute inset-0 bg-gradient-to-b from-[#E11D48]/10 to-transparent pointer-events-none"></div><div className="w-24 h-24 bg-[#E11D48] rounded-full flex items-center justify-center mx-auto mb-8 text-white shadow-2xl shadow-rose-500/50"><CheckCircle2 size={48}/></div><h2 className="text-3xl font-black uppercase text-white mb-6">Pedido Recebido!</h2><p className="text-zinc-500 text-sm mb-10 leading-relaxed font-medium">Seu pedido foi enviado para validação da central. Você será notificado assim que a produção iniciar.</p><button onClick={() => setIsOrderSuccessOpen(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs tracking-[0.2em] hover:bg-zinc-200 transition-transform hover:scale-[1.02] shadow-xl">Voltar a Loja</button></motion.div></div>)}
-    </div>
-  );
 }
