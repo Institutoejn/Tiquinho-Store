@@ -1,18 +1,35 @@
--- 1. LIMPEZA DE DEPENDÊNCIAS (CRUCIAL PARA CORRIGIR O ERRO 2BP01)
--- Removemos as políticas da tabela 'orders' que dependem da tabela antiga 'profiles'
-DROP POLICY IF EXISTS "Admins can view all orders" ON public.orders;
-DROP POLICY IF EXISTS "Admins can update orders" ON public.orders;
-DROP POLICY IF EXISTS "Users can view own orders" ON public.orders;
-DROP POLICY IF EXISTS "Users can insert orders" ON public.orders;
+-- 1. LIMPEZA TOTAL (RESET FORCE)
+-- Remove gatilhos e funções antigas
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS public.handle_new_user();
 
--- 2. REMOVER TABELA PROFILES ANTIGA
--- Usamos CASCADE para garantir que qualquer objeto dependente remanescente também seja removido
-DROP TABLE IF EXISTS public.profiles CASCADE;
+-- Remove tabelas explicitamente para evitar erro "relation already exists"
+-- A ordem importa: removemos quem depende (orders) antes de quem é dependido (users)
+DROP TABLE IF EXISTS public.orders CASCADE;
+DROP TABLE IF EXISTS public.users CASCADE;
+DROP TABLE IF EXISTS public.profiles CASCADE; 
 
--- 3. GARANTIR TABELA ORDERS (Se não existir)
-CREATE TABLE IF NOT EXISTS public.orders (
+-- 2. CRIAR A TABELA 'USERS'
+CREATE TABLE public.users (
+  id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL PRIMARY KEY,
+  email text,
+  unit_name text,
+  network_tag text,
+  role text CHECK (role IN ('user', 'admin')) DEFAULT 'user',
+  cnpj text,
+  phone text,
+  contact_name text,
+  cep text,
+  address_street text,
+  address_city text,
+  address_state text,
+  created_at timestamptz DEFAULT now()
+);
+
+-- 3. CRIAR A TABELA 'ORDERS'
+CREATE TABLE public.orders (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     items JSONB NOT NULL,
     status TEXT DEFAULT 'Pendente',
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -25,64 +42,79 @@ CREATE TABLE IF NOT EXISTS public.orders (
     network_tag TEXT
 );
 
--- 4. CRIAR A TABELA 'USERS' PÚBLICA (SUBSTITUINDO PROFILES)
-CREATE TABLE IF NOT EXISTS public.users (
-  id uuid references auth.users on delete cascade not null primary key,
-  email text,
-  unit_name text,
-  network_tag text,
-  role text check (role in ('user', 'admin')) default 'user',
-  cnpj text,
-  phone text,
-  contact_name text,
-  cep text,
-  address_street text,
-  address_city text,
-  address_state text,
-  created_at timestamptz default now()
-);
+-- 4. TRIGGER (GATILHO) AUTOMÁTICO
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.users (
+    id, 
+    email, 
+    unit_name, 
+    network_tag, 
+    role, 
+    cnpj, 
+    phone, 
+    contact_name, 
+    cep, 
+    address_street, 
+    address_city, 
+    address_state
+  )
+  VALUES (
+    new.id,
+    new.email,
+    new.raw_user_meta_data->>'unit_name',
+    new.raw_user_meta_data->>'network_tag',
+    COALESCE(new.raw_user_meta_data->>'role', 'user'),
+    new.raw_user_meta_data->>'cnpj',
+    new.raw_user_meta_data->>'phone',
+    new.raw_user_meta_data->>'contact_name',
+    new.raw_user_meta_data->>'cep',
+    new.raw_user_meta_data->>'address_street',
+    new.raw_user_meta_data->>'address_city',
+    new.raw_user_meta_data->>'address_state'
+  );
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 5. ATIVAR RLS (SEGURANÇA)
+-- Ativa o gatilho
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- 5. ATIVAR SEGURANÇA (RLS)
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
--- 6. POLÍTICAS DA TABELA USERS (PERFIL)
--- Permite que o sistema leia os usuários para verificar login/admin
+-- 6. POLÍTICAS DE ACESSO (PERMISSÕES)
+
+-- USERS
 CREATE POLICY "Public users are viewable by everyone" 
 ON public.users FOR SELECT USING (true);
 
--- Permite que o usuário crie seu próprio perfil no cadastro
-CREATE POLICY "Users can insert their own profile" 
-ON public.users FOR INSERT WITH CHECK (auth.uid() = id);
-
--- Permite que o usuário edite seus dados
 CREATE POLICY "Users can update own profile" 
 ON public.users FOR UPDATE USING (auth.uid() = id);
 
--- Permite deletar conta
 CREATE POLICY "Users can delete own profile" 
 ON public.users FOR DELETE USING (auth.uid() = id);
 
--- 7. POLÍTICAS DA TABELA ORDERS (AGORA APONTANDO CORRETAMENTE PARA 'public.users')
-
--- Usuário comum vê e cria apenas seus pedidos
+-- ORDERS
 CREATE POLICY "Users can view own orders" 
 ON public.orders FOR SELECT USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert orders" 
 ON public.orders FOR INSERT WITH CHECK (auth.uid() = user_id);
 
--- Admin vê TUDO (A mágica acontece aqui: checamos se o usuário atual tem role='admin' na tabela users)
 CREATE POLICY "Admins can view all orders" 
 ON public.orders FOR SELECT USING (
   (SELECT role FROM public.users WHERE id = auth.uid()) = 'admin'
 );
 
--- Admin edita TUDO (para mudar status dos pedidos)
 CREATE POLICY "Admins can update orders" 
 ON public.orders FOR UPDATE USING (
   (SELECT role FROM public.users WHERE id = auth.uid()) = 'admin'
 );
 
--- 8. RECARREGAR SCHEMA DO SUPABASE
+-- Recarrega o schema
 NOTIFY pgrst, 'reload schema';
