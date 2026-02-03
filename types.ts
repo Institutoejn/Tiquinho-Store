@@ -33,12 +33,14 @@ export interface CartItem extends Product {
   quantity: number;
 }
 
+// Fixed: Added network_tag and extended status types to match Admin Panel logic
 export interface Order {
   id: string;
   user_email: string;
   unit_name: string;
+  network_tag?: string;
   order_details: any;
   total_price: number;
-  status: 'Pago/Aguardando Produção' | 'Pendente';
+  status: 'Pago/Aguardando Produção' | 'Pendente' | 'AGUARDANDO VALIDAÇÃO' | 'PAGO / EM PRODUÇÃO' | 'PEDIDO PRODUZIDO' | 'PAGAMENTO RECUSADO';
   created_at: string;
 }
