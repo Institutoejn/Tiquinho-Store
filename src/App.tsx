@@ -77,10 +77,12 @@ interface OrderDB {
 }
 
 // --- COMPONENTS ---
-const Logo = ({ className = "w-10 h-10" }: { className?: string }) => (
-  <div className={`${className} bg-[#E11D48] rounded-2xl flex items-center justify-center shadow-lg shadow-rose-600/30 select-none border border-white/10`}>
-    <span className="text-2xl font-black text-white italic tracking-tighter -skew-x-6">T</span>
-  </div>
+const Logo = ({ className = "h-12 w-auto" }: { className?: string }) => (
+  <img 
+    src="https://i.imgur.com/dtOfmhg.png" 
+    alt="Tiquinho Uniformes" 
+    className={`${className} object-contain`}
+  />
 );
 
 const Spinner = () => (
@@ -461,9 +463,11 @@ export default function App() {
         <div className="w-full max-w-md">
             {authFlow === 'initial' ? (
                 <div className="flex flex-col items-center gap-6">
-                    <div className="w-24 h-24 bg-[#E11D48] rounded-[32px] flex items-center justify-center mb-4 shadow-2xl shadow-rose-600/20">
-                        <span className="text-5xl font-black text-white italic -skew-x-6">T</span>
-                    </div>
+                    <img 
+                      src="https://i.imgur.com/dtOfmhg.png" 
+                      alt="Tiquinho Uniformes" 
+                      className="h-32 w-auto mb-4 drop-shadow-2xl"
+                    />
                     <div className="text-center mb-8">
                         <h2 className="text-xs font-bold tracking-[0.4em] text-zinc-500 uppercase mb-1">Tiquinho Corporate</h2>
                         <p className="text-zinc-600 text-[10px]">Plataforma de Uniformes Corporativos</p>
