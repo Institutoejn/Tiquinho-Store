@@ -545,11 +545,11 @@ export default function App() {
                     <img 
                       src="https://i.imgur.com/dtOfmhg.png" 
                       alt="Tiquinho Uniformes" 
-                      className="h-32 w-auto mb-4 drop-shadow-2xl"
+                      className="h-48 w-auto mb-2 drop-shadow-2xl"
                     />
-                    <div className="text-center mb-8">
-                        <h2 className="text-xs font-bold tracking-[0.4em] text-zinc-500 uppercase mb-1">Tiquinho Corporate</h2>
-                        <p className="text-zinc-600 text-[10px]">Plataforma de Uniformes Corporativos</p>
+                    <div className="text-center mb-10">
+                        <h2 className="text-sm font-bold tracking-[0.4em] text-zinc-500 uppercase mb-2">Tiquinho Corporate</h2>
+                        <p className="text-zinc-400 text-xs tracking-wide">Plataforma de Uniformes Corporativos</p>
                     </div>
                     <button onClick={() => setAuthFlow('admin')} className="w-full glass p-8 rounded-[40px] border border-white/5 hover:border-[#E11D48]/30 transition-all group flex items-center gap-6">
                         <div className="w-16 h-16 bg-[#E11D48]/10 rounded-2xl flex items-center justify-center group-hover:bg-[#E11D48]/20 transition-colors"><ShieldCheck className="text-[#E11D48]" size={32} /></div>
