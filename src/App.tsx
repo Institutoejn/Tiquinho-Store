@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from '../types';
 import { supabase } from '../supabaseClient';
 
-// --- PIX HELPER ---
+// --- PIX HELPER (BLINDADO) ---
 class PixPayload {
   private merchantKey: string;
   private merchantName: string;
@@ -19,13 +19,15 @@ class PixPayload {
 
   constructor(key: string, name: string, city: string, amount: number, txId: string = '***') {
     this.merchantKey = key.replace(/\D/g, ''); 
-    this.merchantName = this.normalizeString(name, 25); 
-    this.merchantCity = this.normalizeString(city, 15); 
+    // Proteção contra nomes nulos
+    this.merchantName = this.normalizeString(name || '', 25); 
+    this.merchantCity = this.normalizeString(city || '', 15); 
     this.amount = amount.toFixed(2);
-    this.txId = this.normalizeString(txId, 25) || '***';
+    this.txId = this.normalizeString(txId || '***', 25);
   }
 
   private normalizeString(str: string, limit: number): string {
+    if (!str) return ""; 
     return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 ]/g, "").toUpperCase().substring(0, limit).trim();
   }
   
@@ -128,7 +130,6 @@ export default function App() {
     adminKey: '', cnpj: '', phone: '', contact_name: '', cep: '', 
     address_street: '', address_city: '', address_state: ''
   });
-  const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false);
   
   // Admin Product Form
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -168,7 +169,14 @@ export default function App() {
         // Tabela 'users' conforme solicitado
         const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
         if (profile) {
-          setCurrentUser({ id: session.user.id, email: session.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
+          // CORREÇÃO CRÍTICA: || '' previne o erro de 'toUpperCase' em null
+          setCurrentUser({ 
+              id: session.user.id, 
+              email: session.user.email!, 
+              unit_name: profile.unit_name || '', 
+              network_tag: profile.network_tag || '', 
+              role: profile.role || 'user' 
+          });
         }
       }
       setIsLoading(false);
@@ -269,15 +277,22 @@ export default function App() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email, password: formData.password });
       if (error) throw error;
-      // Tabela 'users'
-      const { data: profile } = await supabase.from('users').select('*').eq('id', data.user.id).single();
       
-      // Se por algum motivo o trigger falhou e não criou o perfil, tenta buscar o usuario basico
-      if (!profile) {
-          throw new Error("Perfil não encontrado ou pendente de criação.");
+      // Tenta buscar o perfil.
+      const { data: profile, error: profileError } = await supabase.from('users').select('*').eq('id', data.user.id).single();
+      
+      if (!profile || profileError) {
+          throw new Error("Perfil de usuário não encontrado. Entre em contato com o suporte.");
       }
 
-      setCurrentUser({ id: data.user.id, email: data.user.email!, unit_name: profile.unit_name, network_tag: profile.network_tag, role: profile.role });
+      // CORREÇÃO CRÍTICA: Garantir que valores nulos sejam strings vazias
+      setCurrentUser({ 
+          id: data.user.id, 
+          email: data.user.email!, 
+          unit_name: profile.unit_name || '', 
+          network_tag: profile.network_tag || '', 
+          role: profile.role || 'user'
+      });
     } catch (err: any) { showToast(err.message, "error"); } finally { setIsLoading(false); }
   };
 
@@ -291,8 +306,7 @@ export default function App() {
     }
     
     try {
-      // ENVIANDO DADOS VIA METADATA
-      // Isso permite que o Trigger SQL capture os dados e crie o usuário na tabela 'users' automaticamente
+      // 1. Cria o usuário na Autenticação COM METADADOS (Isso conserta o problema do banco)
       const { data, error } = await supabase.auth.signUp({ 
           email: formData.email, 
           password: formData.password,
@@ -315,7 +329,37 @@ export default function App() {
       if (error) throw error;
 
       if (data.user) {
-         showToast("Cadastro realizado! Faça login.", "success");
+         // 2. FORÇA A INSERÇÃO NA TABELA PÚBLICA MANUALMENTE (Fallback se o trigger falhar)
+         const { error: dbError } = await supabase.from('users').upsert({
+            id: data.user.id,
+            email: formData.email,
+            unit_name: formData.unit_name,
+            network_tag: authFlow === 'admin' ? 'admin' : formData.network_tag,
+            role: authFlow === 'admin' ? 'admin' : 'user',
+            cnpj: formData.cnpj,
+            phone: formData.phone,
+            contact_name: formData.contact_name,
+            cep: formData.cep,
+            address_street: formData.address_street,
+            address_city: formData.address_city,
+            address_state: formData.address_state
+         });
+
+         if (dbError) {
+             console.error("Erro ao salvar perfil (fallback):", dbError);
+         }
+
+         // 3. LOGIN AUTOMÁTICO IMEDIATO
+         // Isso evita ter que fazer login de novo e corrige o problema de "tela preta" se o banco demorar para responder
+         setCurrentUser({
+            id: data.user.id,
+            email: formData.email,
+            unit_name: formData.unit_name || '',
+            network_tag: authFlow === 'admin' ? 'admin' : (formData.network_tag || ''),
+            role: authFlow === 'admin' ? 'admin' : 'user'
+         });
+
+         showToast("Bem-vindo!", "success");
          setIsSigningUp(false);
       }
     } catch (err: any) { 
@@ -476,4 +520,889 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  // --- ADMIN PANEL ---
+  if (currentUser.role === 'admin') {
+    const stats = {
+      activeModels: products.length,
+      revenue: orders.filter(o => o.status !== 'AGUARDANDO VALIDAÇÃO').reduce((acc, o) => acc + (o.total_price || 0), 0),
+      topNetwork: 'Desconhecido',
+      // History Stats
+      totalOrders: orders.length,
+      pendingOrders: orders.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length,
+      producingOrders: orders.filter(o => o.status === 'PAGO / EM PRODUÇÃO').length,
+      readyOrders: orders.filter(o => o.status === 'PEDIDO PRODUZIDO').length,
+      refusedOrders: orders.filter(o => o.status === 'PAGAMENTO RECUSADO').length,
+    };
+
+    return (
+      <div className="min-h-screen bg-[#09090b] text-zinc-100 p-8">
+         <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
+         
+         {/* Admin Header */}
+         <div className="w-full max-w-[96%] mx-auto flex justify-between items-center mb-10 bg-zinc-900/50 backdrop-blur-md p-6 rounded-[32px] border border-white/5 sticky top-6 z-40 shadow-2xl">
+            <div className="flex items-center gap-4">
+               <Logo />
+               <h1 className="text-xs font-black uppercase text-zinc-400 tracking-widest">Painel Jéssica</h1>
+            </div>
+            <button onClick={() => setCurrentUser(null)} className="p-3 bg-zinc-900 rounded-xl text-zinc-500 hover:text-white border border-white/5 transition-colors"><LogOut size={20}/></button>
+         </div>
+
+         {/* Admin Tabs */}
+         <div className="w-full max-w-[96%] mx-auto bg-zinc-950 border border-white/5 p-1 rounded-2xl flex gap-1 mb-10 overflow-x-auto">
+             {['products', 'pending', 'history', 'users'].map(tab => (
+                 <button 
+                    key={tab} 
+                    onClick={() => setAdminTab(tab as any)}
+                    className={`flex-1 py-4 px-6 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${adminTab === tab ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'text-zinc-500 hover:bg-zinc-900'}`}
+                 >
+                    {tab === 'products' ? 'Produtos' : tab === 'pending' ? 'Pendentes' : tab === 'history' ? 'Acessos'}
+                 </button>
+             ))}
+         </div>
+
+         <div className="w-full max-w-[96%] mx-auto">
+             {adminTab === 'products' && (
+                 <>
+                    {/* Performance Stats */}
+                    <div className="mb-10">
+                       <h3 className="flex items-center gap-2 text-lg font-black uppercase text-white mb-6"><Factory className="text-[#E11D48]" size={20}/> Performance Global</h3>
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                           <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                               <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-500 mb-6"><LayoutGrid size={24}/></div>
+                               <p className="text-[10px] font-black uppercase text-zinc-500 mb-2">Modelos Ativos</p>
+                               <p className="text-4xl font-black text-white">{stats.activeModels}</p>
+                           </div>
+                           <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                               <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 mb-6"><Wallet size={24}/></div>
+                               <p className="text-[10px] font-black uppercase text-zinc-500 mb-2">Receita Confirmada</p>
+                               <p className="text-4xl font-black text-white">{formatCurrency(stats.revenue)}</p>
+                           </div>
+                           <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                               <div className="w-12 h-12 bg-rose-500/10 rounded-2xl flex items-center justify-center text-rose-500 mb-6"><TrendingUp size={24} /></div> 
+                               <p className="text-[10px] font-black uppercase text-zinc-500 mb-2">Rede Mais Ativa</p>
+                               <p className="text-2xl font-black text-white">{stats.topNetwork}</p>
+                           </div>
+                       </div>
+                    </div>
+
+                    {/* Add Product Form - PREMIUM LAYOUT RESTORED */}
+                    <div className="bg-zinc-950 border border-white/5 rounded-[40px] p-12 mb-12 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#E11D48]/5 rounded-full blur-[100px] pointer-events-none"></div>
+                        <h3 className="flex items-center gap-3 text-2xl font-black uppercase text-white mb-10 relative z-10"><PlusCircle className="text-[#E11D48]" size={28}/> {editingId ? 'Editar Produto' : 'Gerenciar Catálogo'}</h3>
+                        
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 relative z-10">
+                            {/* Image Upload Column - TALL */}
+                            <div className="lg:col-span-1">
+                                <p className="text-[10px] font-bold uppercase text-zinc-500 mb-4 tracking-widest">Imagem Principal</p>
+                                <div onClick={() => fileInputRef.current?.click()} className="h-[400px] bg-zinc-900/50 border-2 border-dashed border-zinc-800 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:border-[#E11D48] transition-all group relative overflow-hidden mb-4">
+                                    {newProduct.image_url ? (
+                                        <img src={newProduct.image_url} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                                    ) : (
+                                        <>
+                                            <div className="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mb-6 group-hover:bg-[#E11D48]/20 transition-colors">
+                                                <ImageIcon className="text-zinc-600 group-hover:text-[#E11D48]" size={32}/>
+                                            </div>
+                                            <span className="text-xs text-zinc-500 font-bold uppercase tracking-widest">Upload Imagem</span>
+                                        </>
+                                    )}
+                                </div>
+                                <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => handleImageUpload(e, -1)}/>
+
+                                {/* Additional Images Upload */}
+                                <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Fotos Extras (Máx 3)</p>
+                                <div className="grid grid-cols-3 gap-3">
+                                    {[0, 1, 2].map(idx => (
+                                        <div key={idx} className="relative aspect-square">
+                                            <div 
+                                                onClick={() => {
+                                                    if (idx === 0) extraFileRef1.current?.click();
+                                                    if (idx === 1) extraFileRef2.current?.click();
+                                                    if (idx === 2) extraFileRef3.current?.click();
+                                                }}
+                                                className="w-full h-full bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center cursor-pointer hover:border-[#E11D48] overflow-hidden group"
+                                            >
+                                                {newProduct.additional_images && newProduct.additional_images[idx] ? (
+                                                    <img src={newProduct.additional_images[idx]} className="w-full h-full object-cover"/>
+                                                ) : (
+                                                    <Plus size={16} className="text-zinc-600 group-hover:text-[#E11D48]"/>
+                                                )}
+                                            </div>
+                                            {newProduct.additional_images && newProduct.additional_images[idx] && (
+                                                <button onClick={() => removeAdditionalImage(idx)} className="absolute -top-1 -right-1 bg-rose-600 rounded-full p-1 shadow-lg hover:scale-110 transition-transform">
+                                                    <X size={10} className="text-white"/>
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    <input type="file" ref={extraFileRef1} className="hidden" onChange={(e) => handleImageUpload(e, 0)}/>
+                                    <input type="file" ref={extraFileRef2} className="hidden" onChange={(e) => handleImageUpload(e, 1)}/>
+                                    <input type="file" ref={extraFileRef3} className="hidden" onChange={(e) => handleImageUpload(e, 2)}/>
+                                </div>
+                            </div>
+                            
+                            {/* Inputs Column - WIDE */}
+                            <div className="lg:col-span-2 space-y-8">
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Nome do Uniforme</p>
+                                    <input className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" placeholder="Ex: Camiseta Polo Branca" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
+                                </div>
+                                
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Descrição Detalhada</p>
+                                    <textarea className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm h-40 resize-none focus:border-[#E11D48] outline-none transition-colors" placeholder="Detalhes sobre tecido, gola, acabamento..." value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} />
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-6">
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Preço Unitário (R$)</p>
+                                        <input type="number" className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Categoria / Estação</p>
+                                        <select className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})}>
+                                            <option>Masculino</option><option>Feminino</option><option>Inverno</option><option>Acessórios</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-6">
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Pedido Mínimo (UN)</p>
+                                        <input type="number" className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" value={newProduct.min_order} onChange={e => setNewProduct({...newProduct, min_order: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Prazo Produção (Dias)</p>
+                                        <input type="number" className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" value={newProduct.production_days} onChange={e => setNewProduct({...newProduct, production_days: e.target.value})} />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Tamanhos Disponíveis</p>
+                                    <div className="flex gap-3">
+                                        {SIZES_OPTIONS.map(s => (
+                                            <button 
+                                                key={s}
+                                                type="button"
+                                                onClick={() => toggleSize(s)}
+                                                className={`flex-1 py-4 rounded-2xl text-xs font-black border transition-all ${newProduct.available_sizes.includes(s) ? 'bg-zinc-800 border-zinc-600 text-white shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-500 hover:bg-zinc-800'}`}
+                                            >
+                                                {s}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="pt-8 border-t border-white/5">
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-6 tracking-widest">Disponibilidade / Rede</p>
+                                    
+                                    {/* Todos os Clientes Checkbox */}
+                                    <div onClick={() => toggleNetwork('*')} className="flex items-center gap-4 p-6 bg-zinc-900 border border-white/5 rounded-2xl cursor-pointer hover:bg-zinc-800 transition-colors mb-4 group">
+                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${newProduct.network_tags.includes('*') ? 'bg-white border-white scale-110' : 'border-zinc-700 group-hover:border-zinc-500'}`}>
+                                            {newProduct.network_tags.includes('*') && <Check size={20} className="text-black"/>}
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-black text-white uppercase">Todos os Clientes</p>
+                                            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Produto visível em toda a plataforma</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Lista de Redes Específicas */}
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Rede / Franquia</p>
+                                    <div className="space-y-3 mb-8 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                                        {clientProfiles.map(profile => (
+                                            <div key={profile.id} onClick={() => toggleNetwork(profile.network_tag)} className="flex items-center gap-4 p-4 border border-white/5 bg-zinc-950 rounded-2xl cursor-pointer hover:border-white/20 transition-all group">
+                                                <div className={`w-6 h-6 rounded-md border flex items-center justify-center transition-all ${newProduct.network_tags.includes(profile.network_tag) ? 'bg-white border-white' : 'border-zinc-700'}`}>
+                                                    {newProduct.network_tags.includes(profile.network_tag) && <Check size={14} className="text-black"/>}
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-black text-white uppercase">{profile.unit_name}</p>
+                                                    <p className="text-[9px] text-zinc-500 uppercase tracking-wider">{profile.network_tag}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {clientProfiles.length === 0 && <p className="text-zinc-600 text-xs italic p-4 text-center">Nenhuma rede cadastrada.</p>}
+                                    </div>
+
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Adicionar Manualmente</p>
+                                    <input 
+                                        className="w-full bg-zinc-900 border border-white/5 rounded-2xl p-6 text-white text-sm focus:border-[#E11D48] outline-none transition-colors" 
+                                        placeholder="Ex: nova-rede" 
+                                        onKeyDown={(e) => { 
+                                            if(e.key === 'Enter') { 
+                                                e.preventDefault(); 
+                                                const val = e.currentTarget.value; 
+                                                if(val) toggleNetwork(val); 
+                                                e.currentTarget.value = ''; 
+                                            }
+                                        }} 
+                                    />
+                                    {/* Tags manuais adicionadas que não estão nos perfis */}
+                                    <div className="flex flex-wrap gap-2 mt-4">
+                                        {newProduct.network_tags.filter(t => t !== '*' && !clientProfiles.some(cp => cp.network_tag === t)).map(tag => (
+                                             <span key={tag} className="bg-zinc-800 px-4 py-2 rounded-xl text-xs flex items-center gap-2 border border-white/5 font-bold uppercase hover:border-rose-500/50 transition-colors">{tag} <X size={14} className="cursor-pointer hover:text-rose-500" onClick={() => toggleNetwork(tag)}/></span>
+                                        ))}
+                                    </div>
+                                </div>
+                                
+                                <button onClick={handleProductSubmit} className="w-full bg-[#E11D48] hover:bg-rose-600 text-white font-black py-6 rounded-2xl uppercase text-sm tracking-[0.2em] shadow-2xl shadow-rose-900/30 transition-all hover:scale-[1.01] hover:shadow-rose-900/50">{editingId ? 'Atualizar' : 'Publicar'}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Product Filter Bar */}
+                    <div className="flex items-center justify-between mb-8 px-2">
+                        <div className="flex items-center gap-3">
+                           <Filter size={20} className="text-[#E11D48]"/>
+                           <h3 className="text-lg font-black uppercase text-white tracking-wide">Catálogo Cadastrado</h3>
+                        </div>
+                        <div className="flex gap-2 overflow-x-auto max-w-[600px] pb-2 custom-scrollbar">
+                           <button 
+                               onClick={() => setProductFilter('TODOS')}
+                               className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${productFilter === 'TODOS' ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'bg-zinc-900 text-zinc-500 hover:text-white border border-white/5'}`}
+                           >
+                               TODOS
+                           </button>
+                           {availableNetworks.map(net => (
+                               <button 
+                                   key={net}
+                                   onClick={() => setProductFilter(net)}
+                                   className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${productFilter === net ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'bg-zinc-900 text-zinc-500 hover:text-white border border-white/5'}`}
+                               >
+                                   {net}
+                               </button>
+                           ))}
+                        </div>
+                    </div>
+
+                    {/* Product List with Filter Logic */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
+                        {products
+                            .filter(p => productFilter === 'TODOS' || p.network_tag === productFilter)
+                            .map(p => (
+                            <div key={p.id} className="bg-zinc-900/30 border border-white/5 p-6 rounded-[32px] flex items-center gap-6 group hover:border-white/20 transition-all hover:bg-zinc-900/50">
+                                <img src={p.image_url} className="w-24 h-24 rounded-2xl object-cover bg-zinc-900 shadow-lg"/>
+                                <div>
+                                    <h4 className="text-sm font-black text-white uppercase mb-1">{p.name}</h4>
+                                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-4">{p.network_tag}</p>
+                                    <div className="flex gap-3">
+                                        <button onClick={() => { setEditingId(p.id); setNewProduct({ name: p.name, price: p.price.toString(), description: p.description || '', image_url: p.image_url, additional_images: p.additional_images || [], network_tags: [p.network_tag], category: p.category, min_order: p.min_order.toString(), production_days: p.production_days.toString(), available_sizes: p.available_sizes || [] }); }} className="px-4 py-2 bg-zinc-950 rounded-lg text-[10px] text-zinc-400 hover:text-white font-bold uppercase tracking-wider transition-colors border border-white/5">Editar</button>
+                                        <button onClick={() => { if(confirm("Deletar?")) { supabase.from('products').delete().eq('id', p.id).then(fetchInitialData); } }} className="px-4 py-2 bg-rose-950/30 rounded-lg text-[10px] text-rose-500 font-bold uppercase tracking-wider transition-colors border border-rose-500/10 hover:bg-rose-900/50">Excluir</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                 </>
+             )}
+
+             {adminTab === 'pending' && (
+                 <div>
+                     <h3 className="flex items-center gap-3 text-2xl font-black uppercase text-white mb-8"><Package className="text-[#E11D48]" size={28}/> Pedidos Pendentes de Validação</h3>
+                     {orders.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').length === 0 ? (
+                         <div className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-24 flex flex-col items-center justify-center opacity-50">
+                             <CheckCircle2 size={64} className="text-emerald-500 mb-6"/>
+                             <p className="text-zinc-500 font-bold uppercase tracking-[0.2em]">Nenhum pedido pendente</p>
+                         </div>
+                     ) : (
+                         <div className="grid gap-6">
+                             {orders.filter(o => o.status === 'AGUARDANDO VALIDAÇÃO').map(order => (
+                                 <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[40px] p-10 backdrop-blur-sm">
+                                     <div className="flex justify-between items-start mb-8">
+                                         <div>
+                                             <h4 className="text-2xl font-black text-white uppercase mb-1">{order.unit_name}</h4>
+                                             <p className="text-xs text-zinc-500 uppercase tracking-widest flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div> {new Date(order.created_at).toLocaleDateString()} • {order.user_email}</p>
+                                         </div>
+                                         <p className="text-4xl font-black text-[#E11D48]">{formatCurrency(order.total_price || 0)}</p>
+                                     </div>
+                                     <div className="bg-zinc-950/50 p-6 rounded-3xl mb-8 border border-white/5">
+                                         {order.items.map((it, i) => (
+                                             <div key={i} className="flex justify-between text-sm text-zinc-400 py-3 border-b border-white/5 last:border-0">
+                                                 <span className="font-medium uppercase tracking-wide">{it.quantity}x {it.name} <span className="text-white font-black">({it.selectedSize})</span></span>
+                                                 <span className="font-bold">{formatCurrency(it.price * it.quantity)}</span>
+                                             </div>
+                                         ))}
+                                     </div>
+                                     <div className="flex gap-6">
+                                         <button onClick={() => handleStatusUpdate(order.id, 'PAGAMENTO RECUSADO')} className="flex-1 py-5 bg-zinc-950 text-rose-500 rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-rose-950/30 border border-white/5 transition-colors">Recusar</button>
+                                         <button onClick={() => handleStatusUpdate(order.id, 'PAGO / EM PRODUÇÃO')} className="flex-1 py-5 bg-emerald-600 text-white rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-900/20 hover:scale-[1.02]">Confirmar Pagamento</button>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     )}
+                 </div>
+             )}
+
+             {adminTab === 'history' && (
+                 <div>
+                     {/* History Dashboard Stats (Replicating Image) */}
+                     <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-10">
+                        <div className="bg-zinc-900/40 border border-white/5 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-zinc-500 tracking-widest mb-4">Total</span>
+                            <span className="text-3xl font-black text-white">{stats.totalOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-yellow-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-yellow-500 tracking-widest mb-4">Pendentes</span>
+                            <span className="text-3xl font-black text-yellow-500">{stats.pendingOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-blue-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-blue-500 tracking-widest mb-4">Produzindo</span>
+                            <span className="text-3xl font-black text-blue-500">{stats.producingOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-emerald-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-emerald-500 tracking-widest mb-4">Prontos</span>
+                            <span className="text-3xl font-black text-emerald-500">{stats.readyOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-rose-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest mb-4">Recusados</span>
+                            <span className="text-3xl font-black text-rose-500">{stats.refusedOrders}</span>
+                        </div>
+                        <div className="bg-zinc-900/40 border border-rose-500/10 rounded-[24px] p-6 flex flex-col justify-between">
+                            <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest mb-4">Receita</span>
+                            <span className="text-2xl font-black text-[#E11D48]">{formatCurrency(stats.revenue)}</span>
+                        </div>
+                     </div>
+
+                     {/* Filters Bar */}
+                     <div className="flex gap-4 mb-8 overflow-x-auto pb-2">
+                        {['TODOS', 'EM PRODUÇÃO', 'PRODUZIDOS', 'RECUSADOS'].map(filter => (
+                            <button 
+                                key={filter}
+                                onClick={() => setHistoryFilter(filter)}
+                                className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${historyFilter === filter ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/20' : 'bg-zinc-900/50 text-zinc-500 hover:text-white border border-white/5'}`}
+                            >
+                                {filter}
+                            </button>
+                        ))}
+                     </div>
+
+                     {/* Orders List (Layout from Image) */}
+                     <div className="grid gap-6">
+                         {orders
+                            .filter(o => {
+                                if (historyFilter === 'TODOS') return true;
+                                if (historyFilter === 'EM PRODUÇÃO') return o.status === 'PAGO / EM PRODUÇÃO';
+                                if (historyFilter === 'PRODUZIDOS') return o.status === 'PEDIDO PRODUZIDO';
+                                if (historyFilter === 'RECUSADOS') return o.status === 'PAGAMENTO RECUSADO';
+                                return true;
+                            })
+                            .map(order => (
+                             <div key={order.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-8 group hover:bg-zinc-900/50 transition-colors">
+                                 {/* Card Header Row */}
+                                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+                                     <div className="flex items-center gap-4 mb-4 md:mb-0">
+                                         <h3 className="text-xl font-black text-white uppercase tracking-tight">{order.unit_name}</h3>
+                                         <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg tracking-wider border ${
+                                             order.status.includes('RECUSADO') ? 'bg-rose-950/30 border-rose-500/20 text-rose-500' :
+                                             order.status.includes('PRODUZIDO') ? 'bg-emerald-950/30 border-emerald-500/20 text-emerald-500' :
+                                             order.status.includes('PRODUÇÃO') ? 'bg-blue-950/30 border-blue-500/20 text-blue-500' :
+                                             'bg-zinc-800 border-zinc-700 text-zinc-500'
+                                         }`}>
+                                             {order.status === 'PAGO / EM PRODUÇÃO' ? 'PRODUZINDO' : order.status.replace('PEDIDO ', '')}
+                                         </span>
+                                     </div>
+                                     <div className="text-right">
+                                         <p className="text-3xl font-black text-[#E11D48] tracking-tighter">{formatCurrency(order.total_price || 0)}</p>
+                                         <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mt-1">PIX</p>
+                                     </div>
+                                 </div>
+
+                                 {/* Metadata Row */}
+                                 <div className="space-y-1 mb-8">
+                                     <p className="text-sm text-zinc-400 font-medium">{order.user_email}</p>
+                                     <p className="text-[10px] text-zinc-600 uppercase font-bold tracking-wider">
+                                         PEDIDO #{order.id.slice(0,8).toUpperCase()} • {new Date(order.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}, {new Date(order.created_at).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
+                                     </p>
+                                 </div>
+
+                                 {/* Expandable Items Section */}
+                                 <div className="border-t border-white/5 pt-6">
+                                     <button 
+                                        onClick={() => setExpandedHistoryOrder(expandedHistoryOrder === order.id ? null : order.id)}
+                                        className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors"
+                                     >
+                                         {expandedHistoryOrder === order.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                         VER {order.items.length} ITEM(S)
+                                     </button>
+
+                                     {expandedHistoryOrder === order.id && (
+                                         <motion.div 
+                                            initial={{ opacity: 0, height: 0 }} 
+                                            animate={{ opacity: 1, height: 'auto' }} 
+                                            className="mt-6 space-y-3"
+                                         >
+                                             {order.items.map((item, idx) => (
+                                                 <div key={idx} className="flex justify-between items-center bg-zinc-950/50 p-4 rounded-xl border border-white/5">
+                                                     <div className="flex items-center gap-4">
+                                                         <div className="w-10 h-10 bg-zinc-900 rounded-lg overflow-hidden">
+                                                             <img src={item.image_url} className="w-full h-full object-cover opacity-60"/>
+                                                         </div>
+                                                         <div>
+                                                             <p className="text-xs font-black text-white uppercase">{item.name}</p>
+                                                             <p className="text-[10px] text-zinc-500 font-bold uppercase">TAM: {item.selectedSize} • QTD: {item.quantity}</p>
+                                                         </div>
+                                                     </div>
+                                                     <p className="text-sm font-black text-zinc-400">{formatCurrency(item.price * item.quantity)}</p>
+                                                 </div>
+                                             ))}
+                                         </motion.div>
+                                     )}
+                                 </div>
+
+                                 {/* Validation Footer */}
+                                 {order.status !== 'AGUARDANDO VALIDAÇÃO' && (
+                                     <div className="mt-6 pt-4 border-t border-white/5 flex items-center gap-2 text-[10px] text-zinc-700 font-bold uppercase tracking-widest">
+                                         <Clock size={12}/> Validado em {new Date(order.created_at).toLocaleDateString()}
+                                     </div>
+                                 )}
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             )}
+
+             {adminTab === 'users' && (
+                 <div>
+                     <h3 className="flex items-center gap-3 text-2xl font-black uppercase text-white mb-8"><UsersIcon className="text-[#E11D48]" size={28}/> Controle de Acessos</h3>
+                     <div className="space-y-4">
+                         {usersList.map(u => (
+                             <div key={u.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 flex items-center justify-between group hover:border-white/10 transition-colors hover:bg-zinc-900/50">
+                                 <div className="flex items-center gap-8">
+                                     <div className="w-16 h-16 bg-rose-900/20 rounded-2xl flex items-center justify-center text-[#E11D48] font-black text-2xl shadow-inner shadow-rose-900/30">
+                                         {u.unit_name?.charAt(0) || 'U'}
+                                     </div>
+                                     <div>
+                                         <h4 className="text-lg font-black text-white uppercase mb-1">{u.unit_name}</h4>
+                                         <div className="flex gap-3">
+                                             <span className="bg-zinc-950 border border-white/5 px-3 py-1 rounded-lg text-[10px] text-zinc-500 uppercase font-black tracking-widest">{u.network_tag}</span>
+                                             <span className="bg-zinc-950 border border-white/5 px-3 py-1 rounded-lg text-[10px] text-zinc-500 uppercase font-black tracking-widest">{u.email}</span>
+                                         </div>
+                                     </div>
+                                 </div>
+                                 <div className="flex items-center gap-6">
+                                     <span className="bg-emerald-900/20 text-emerald-500 border border-emerald-500/20 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.15em]">
+                                         {u.role === 'admin' ? 'GESTOR' : 'FRANQUEADO'}
+                                     </span>
+                                     <button onClick={() => handleDeleteUser(u.id)} className="w-12 h-12 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-600 hover:text-rose-500 hover:bg-rose-900/20 transition-all border border-white/5 hover:border-rose-500/30">
+                                         <Trash2 size={20} />
+                                     </button>
+                                 </div>
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             )}
+         </div>
+      </div>
+    );
+  }
+
+  // --- CLIENT PANEL ---
+  return (
+    <div className="min-h-screen bg-[#09090b] text-zinc-100 font-['Inter']">
+       <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}</AnimatePresence>
+       
+       {/* Header from Screenshot */}
+       <header className="sticky top-0 z-50 bg-[#09090b]/80 backdrop-blur-md border-b border-white/5">
+           <div className="w-full max-w-[96%] mx-auto px-6 py-5 flex justify-between items-center">
+               <div className="flex items-center gap-6">
+                   <Logo />
+                   <div className="bg-zinc-900/50 border border-white/10 rounded-full px-5 py-2 flex items-center gap-3">
+                       <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse"></div>
+                       <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-300">
+                           {/* CORREÇÃO CRÍTICA: PROTEÇÃO CONTRA CRASH EM VALORES NULOS */}
+                           {(currentUser.network_tag || '').toUpperCase()} <span className="text-zinc-600 mx-2">/</span> {(currentUser.unit_name || '').toUpperCase()}
+                       </span>
+                   </div>
+               </div>
+               <div className="flex items-center gap-6 text-zinc-400">
+                   {/* Notifications Button */}
+                   <div className="relative">
+                       <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="hover:text-white transition-colors relative">
+                           <Bell size={20}/>
+                           {orders.length > 0 && orders[0].status.includes('PRODUZIDO') && (
+                               <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full"></span>
+                           )}
+                       </button>
+                       <AnimatePresence>
+                           {isNotificationsOpen && (
+                               <motion.div initial={{opacity: 0, y: 10}} animate={{opacity: 1, y: 0}} exit={{opacity: 0, y: 10}} className="absolute top-12 right-0 w-80 bg-[#09090b] border border-white/10 rounded-2xl shadow-2xl p-6 z-50">
+                                   <h3 className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest mb-4">Notificações</h3>
+                                   {orders.length > 0 ? (
+                                       <div className="flex items-start gap-4 p-4 bg-zinc-900/50 rounded-xl border border-white/5">
+                                           <div className={`w-8 h-8 rounded-full flex items-center justify-center ${orders[0].status.includes('PRODUZIDO') ? 'bg-emerald-500/10 text-emerald-500' : 'bg-zinc-800 text-zinc-500'}`}>
+                                               {orders[0].status.includes('PRODUZIDO') ? <CheckCircle2 size={16}/> : <Clock size={16}/>}
+                                           </div>
+                                           <div>
+                                               <p className="text-sm font-bold text-white mb-1">Última compra</p>
+                                               <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">{orders[0].status}</p>
+                                           </div>
+                                       </div>
+                                   ) : (
+                                       <p className="text-zinc-500 text-xs text-center py-4">Nenhuma notificação</p>
+                                   )}
+                               </motion.div>
+                           )}
+                       </AnimatePresence>
+                   </div>
+                   
+                   {/* History Button */}
+                   <button onClick={() => setIsHistoryModalOpen(true)} className="hover:text-white transition-colors"><List size={20}/></button>
+                   
+                   <button onClick={() => setIsCartOpen(true)} className="relative hover:text-white transition-colors">
+                       <ShoppingCart size={20}/>
+                       {cart.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#E11D48] rounded-full text-[9px] flex items-center justify-center font-bold text-white shadow-lg shadow-rose-900">{cart.length}</span>}
+                   </button>
+                   <button onClick={() => setCurrentUser(null)} className="hover:text-white transition-colors"><LogOut size={20}/></button>
+               </div>
+           </div>
+       </header>
+
+       <main className="w-full max-w-[96%] mx-auto px-6 py-16">
+           {/* Catalog Title */}
+           <div className="mb-12 mt-4">
+               <h1 className="text-4xl font-black uppercase text-white tracking-tight mb-2">Catálogo Oficial</h1>
+               <p className="text-[11px] font-bold uppercase text-zinc-500 tracking-[0.3em]">Selecione os uniformes para sua unidade</p>
+           </div>
+
+           {/* Product Grid - Matching Screenshot Exact Layout */}
+           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5 gap-8 mb-24">
+               {products.filter(p => p.network_tag === '*' || p.network_tag === currentUser.network_tag).map(p => (
+                   <div key={p.id} className="group relative bg-zinc-950 rounded-[32px] overflow-hidden border border-white/5 hover:border-white/20 transition-all duration-300">
+                       {/* Image Area - Tall */}
+                       <div className="h-[320px] relative">
+                           <img src={p.image_url} className="w-full h-full object-cover"/>
+                           {/* Category Badge */}
+                           <div className="absolute top-4 right-4 bg-zinc-900/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
+                               <span className="text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-2"><Tag size={10} className="text-[#E11D48]"/> {p.category}</span>
+                           </div>
+                       </div>
+                       
+                       {/* Bottom Content Area - Dark/Black */}
+                       <div className="p-6 bg-zinc-950 border-t border-white/5 relative">
+                           <h3 className="text-sm font-black text-white uppercase mb-1 tracking-wide">{p.name}</h3>
+                           <p className="text-xl font-black text-[#E11D48]">{formatCurrency(p.price)}</p>
+                           
+                           {/* Hover Action */}
+                           <div className="absolute inset-0 bg-zinc-950/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10">
+                               <button 
+                                  onClick={() => { setDetailsModalOpenId(p.id); setActiveModalImage(p.image_url); }}
+                                  className="bg-white text-black px-6 py-3 rounded-full font-black uppercase text-[10px] tracking-widest hover:scale-105 transition-transform"
+                               >
+                                   Ver Detalhes
+                               </button>
+                           </div>
+                       </div>
+                   </div>
+               ))}
+           </div>
+
+           {/* Orders Section - Reused Premium Style */}
+           <div>
+               <h2 className="text-3xl font-black uppercase text-white mb-10 pl-4 border-l-4 border-[#E11D48]">Meus Pedidos Recentes</h2>
+               <div className="space-y-6">
+                   {orders.map(o => (
+                       <div key={o.id} className="bg-zinc-900 border border-white/5 rounded-[40px] p-10 flex items-center justify-between group hover:border-white/10 transition-colors hover:bg-zinc-900/80">
+                           <div>
+                               <p className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em] mb-3">Pedido #{o.id.slice(0,8)}</p>
+                               <div className="flex items-center gap-4">
+                                   <p className="text-white font-black text-lg">{o.items.length} Item(s)</p>
+                                   <div className="h-1 w-1 bg-zinc-700 rounded-full"></div>
+                                   <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                       o.status.includes('PRODUZIDO') ? 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/20' : 
+                                       o.status.includes('PRODUÇÃO') ? 'bg-blue-500/20 text-blue-500 border border-blue-500/20' : 
+                                       o.status.includes('RECUSADO') ? 'bg-rose-500/20 text-rose-500 border border-rose-500/20' :
+                                       'bg-yellow-500/20 text-yellow-500 border border-yellow-500/20'
+                                   }`}>
+                                       {o.status === 'AGUARDANDO VALIDAÇÃO' ? 'AGUARDANDO APROVAÇÃO' : o.status}
+                                   </span>
+                               </div>
+                           </div>
+                           <p className="text-4xl font-black text-[#E11D48]">{formatCurrency(o.total_price || 0)}</p>
+                       </div>
+                   ))}
+               </div>
+           </div>
+       </main>
+
+       {/* Floating Whatsapp Button */}
+       <a 
+           href="https://wa.me/551732167854" 
+           target="_blank" 
+           rel="noopener noreferrer" 
+           className="fixed bottom-6 right-6 z-[100] w-14 h-14 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-lg shadow-emerald-500/30 hover:scale-110 transition-transform hover:bg-emerald-400"
+       >
+           <MessageCircle size={28} />
+       </a>
+
+       {/* Client History Modal */}
+       <AnimatePresence>
+           {isHistoryModalOpen && (
+               <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 backdrop-blur-md">
+                   <motion.div initial={{scale: 0.95, opacity: 0}} animate={{scale: 1, opacity: 1}} exit={{scale: 0.95, opacity: 0}} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-2xl w-full p-8 relative overflow-hidden flex flex-col max-h-[85vh]">
+                        <div className="flex justify-between items-center mb-8">
+                             <div className="flex items-center gap-3">
+                                 <div className="w-10 h-10 bg-[#E11D48]/20 rounded-xl flex items-center justify-center text-[#E11D48]">
+                                     <History size={20}/>
+                                 </div>
+                                 <h2 className="text-2xl font-black uppercase text-white tracking-tight">Meu Histórico</h2>
+                             </div>
+                             <button onClick={() => setIsHistoryModalOpen(false)} className="text-zinc-500 hover:text-white transition-colors"><X/></button>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                             {orders.length === 0 && (
+                                 <div className="text-center py-20 opacity-50">
+                                     <History size={48} className="mx-auto mb-4 text-zinc-600"/>
+                                     <p className="text-zinc-500 font-bold uppercase tracking-widest">Nenhum pedido no histórico</p>
+                                 </div>
+                             )}
+                             {orders.map(order => (
+                                 <div key={order.id} className="bg-zinc-900 border border-white/5 rounded-3xl p-6">
+                                     <div className="flex justify-between items-center mb-6 pb-6 border-b border-white/5">
+                                         <div>
+                                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">ID</p>
+                                             <p className="text-sm font-black text-white">#{order.id.slice(0,8).toUpperCase()}</p>
+                                         </div>
+                                         <div className="text-right">
+                                             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Data</p>
+                                             <p className="text-sm font-black text-white">{new Date(order.created_at).toLocaleDateString()}</p>
+                                         </div>
+                                     </div>
+                                     <div className="space-y-3 mb-6">
+                                         {order.items.map((item, i) => (
+                                             <div key={i} className="flex justify-between text-xs">
+                                                 <span className="text-zinc-300 font-bold"><span className="bg-zinc-800 px-2 py-0.5 rounded text-zinc-500 mr-2">{item.quantity}x</span> {item.name} ({item.selectedSize})</span>
+                                                 <span className="text-zinc-500">{formatCurrency(item.price * item.quantity)}</span>
+                                             </div>
+                                         ))}
+                                     </div>
+                                     <div className="flex justify-between items-center pt-4 border-t border-white/5">
+                                         <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border ${
+                                              order.status.includes('PRODUZIDO') ? 'text-yellow-500 border-yellow-500/20 bg-yellow-500/10' : 
+                                              order.status.includes('PRODUÇÃO') ? 'text-blue-500 border-blue-500/20 bg-blue-500/10' :
+                                              order.status.includes('RECUSADO') ? 'text-rose-500 border-rose-500/20 bg-rose-500/10' :
+                                              'text-zinc-500 border-zinc-700 bg-zinc-800'
+                                         }`}>
+                                             {order.status}
+                                         </span>
+                                         <span className="text-xl font-black text-[#E11D48]">{formatCurrency(order.total_price || 0)}</span>
+                                     </div>
+                                 </div>
+                             ))}
+                        </div>
+
+                        <div className="mt-6 pt-6 border-t border-white/10">
+                             <button onClick={() => setIsHistoryModalOpen(false)} className="w-full bg-zinc-900 hover:bg-zinc-800 text-white py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] transition-colors">Voltar</button>
+                        </div>
+                   </motion.div>
+               </div>
+           )}
+       </AnimatePresence>
+
+       {/* Product Detail Modal Logic */}
+       <AnimatePresence>
+           {detailsModalOpenId && (() => {
+               const p = products.find(prod => prod.id === detailsModalOpenId);
+               if(!p) return null;
+               const selectedSize = clientSelectedSizes[p.id];
+               const allImages = [p.image_url, ...(p.additional_images || [])].filter(Boolean);
+
+               return (
+                   <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-8">
+                       <motion.div initial={{y: 100, opacity: 0}} animate={{y: 0, opacity: 1}} exit={{y: 100, opacity: 0}} className="bg-zinc-950 border border-white/10 rounded-[48px] max-w-5xl w-full overflow-hidden flex flex-col md:flex-row shadow-2xl shadow-black">
+                           <div className="md:w-1/2 h-[600px] md:h-auto bg-zinc-900 relative flex flex-col">
+                               <div className="flex-1 relative">
+                                   <img src={activeModalImage || p.image_url} className="w-full h-full object-cover"/>
+                                   <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-50 pointer-events-none"></div>
+                               </div>
+                               {/* Image Grid */}
+                               {allImages.length > 1 && (
+                                   <div className="p-4 grid grid-cols-4 gap-3 bg-zinc-950/50 backdrop-blur-md absolute bottom-0 w-full">
+                                       {allImages.map((img, idx) => (
+                                           <div 
+                                                key={idx} 
+                                                onClick={() => setActiveModalImage(img)}
+                                                className={`aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${activeModalImage === img ? 'border-[#E11D48] scale-105' : 'border-transparent opacity-70 hover:opacity-100'}`}
+                                           >
+                                               <img src={img} className="w-full h-full object-cover"/>
+                                           </div>
+                                       ))}
+                                   </div>
+                               )}
+                           </div>
+                           <div className="md:w-1/2 p-12 md:p-16 flex flex-col justify-between overflow-y-auto max-h-[90vh] custom-scrollbar">
+                               <div>
+                                   <div className="flex justify-between items-start mb-10">
+                                       <div>
+                                           <h2 className="text-3xl font-black text-white uppercase mb-4 leading-tight">{p.name}</h2>
+                                           <p className="text-4xl font-black text-[#E11D48]">{formatCurrency(p.price)}</p>
+                                       </div>
+                                       <button onClick={() => setDetailsModalOpenId(null)} className="p-4 bg-zinc-900 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"><X/></button>
+                                   </div>
+
+                                   {/* Description in Modal */}
+                                   <div className="mb-8">
+                                       <p className="text-[10px] font-bold uppercase text-zinc-500 mb-2 tracking-[0.2em]">Sobre o Produto</p>
+                                       <p className="text-zinc-400 text-sm leading-relaxed mb-6">{p.description || "Sem descrição disponível."}</p>
+                                       
+                                       <div className="flex gap-4">
+                                            <div className="flex items-center gap-3 bg-zinc-900 px-4 py-3 rounded-xl border border-white/5">
+                                                <Clock size={16} className="text-[#E11D48]"/>
+                                                <div>
+                                                    <p className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider">Prazo de Produção</p>
+                                                    <p className="text-xs font-black text-white">{p.production_days} Dias Úteis</p>
+                                                </div>
+                                            </div>
+                                             <div className="flex items-center gap-3 bg-zinc-900 px-4 py-3 rounded-xl border border-white/5">
+                                                <Package size={16} className="text-[#E11D48]"/>
+                                                <div>
+                                                    <p className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider">Pedido Mínimo</p>
+                                                    <p className="text-xs font-black text-white">{p.min_order} Unidades</p>
+                                                </div>
+                                            </div>
+                                       </div>
+                                   </div>
+
+                                   <div className="mb-10">
+                                       <p className="text-[10px] font-bold uppercase text-zinc-500 mb-4 tracking-[0.2em]">Selecione o Tamanho</p>
+                                       <div className="flex flex-wrap gap-3">
+                                           {(p.available_sizes || []).map(s => (
+                                               <button 
+                                                 key={s}
+                                                 onClick={() => setClientSelectedSizes({...clientSelectedSizes, [p.id]: s})}
+                                                 className={`w-14 h-14 rounded-2xl flex items-center justify-center text-sm font-black transition-all ${selectedSize === s ? 'bg-[#E11D48] text-white shadow-lg shadow-rose-900/40 scale-110' : 'bg-zinc-900 text-zinc-500 hover:text-white hover:bg-zinc-800'}`}
+                                               >
+                                                   {s}
+                                               </button>
+                                           ))}
+                                       </div>
+                                   </div>
+                               </div>
+                               
+                               <div>
+                                   <button 
+                                      onClick={() => {
+                                          if(!selectedSize) return showToast("Selecione um tamanho", "error");
+                                          setCart([...cart, {...p, selectedSize, quantity: p.min_order}]);
+                                          setDetailsModalOpenId(null);
+                                          showToast("Adicionado ao carrinho");
+                                      }}
+                                      className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs tracking-[0.2em] hover:bg-zinc-200 transition-transform hover:scale-[1.02]"
+                                   >
+                                       Adicionar ao Pedido ({p.min_order} UN)
+                                   </button>
+                                   <p className="text-center text-[10px] text-zinc-600 mt-4 font-bold uppercase tracking-[0.2em]">Pedido Mínimo Obrigatório</p>
+                               </div>
+                           </div>
+                       </motion.div>
+                   </div>
+               );
+           })()}
+       </AnimatePresence>
+
+       {/* Cart Drawer */}
+       <AnimatePresence>
+          {isCartOpen && (
+              <motion.div initial={{x: '100%'}} animate={{x: 0}} exit={{x: '100%'}} className="fixed top-0 right-0 h-full w-full max-w-md bg-[#09090b] z-[150] flex flex-col shadow-2xl shadow-black/80">
+                  <div className="p-8 flex justify-between items-center">
+                      <h2 className="text-3xl font-black uppercase text-white tracking-wide">MINHA LISTA</h2>
+                      <button onClick={() => setIsCartOpen(false)}><X className="text-zinc-500 hover:text-white transition-colors" size={24}/></button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-8 space-y-4">
+                      {cart.length === 0 && (
+                          <div className="flex flex-col items-center justify-center h-full opacity-30">
+                              <ShoppingCart size={48} className="mb-4"/>
+                              <p className="text-center text-zinc-400 uppercase text-xs font-black tracking-[0.2em]">Carrinho Vazio</p>
+                          </div>
+                      )}
+                      {cart.map((item, idx) => (
+                          <div key={idx} className="relative bg-zinc-900 p-4 rounded-3xl flex gap-4 border border-white/5 items-center">
+                              <button 
+                                onClick={() => { const n = [...cart]; n.splice(idx, 1); setCart(n); }}
+                                className="absolute top-4 right-4 text-zinc-600 hover:text-white transition-colors"
+                              >
+                                  <X size={16}/>
+                              </button>
+                              <img src={item.image_url} className="w-24 h-24 rounded-2xl object-cover bg-zinc-950"/>
+                              <div className="flex-1 pr-6">
+                                  <h4 className="text-xs font-black text-white uppercase mb-1 leading-tight tracking-wide">{item.name}</h4>
+                                  <p className="text-[10px] text-zinc-500 uppercase font-bold mb-3 tracking-wider">TAM: {item.selectedSize}</p>
+                                  <div className="flex items-center gap-3">
+                                      <button onClick={() => { const n = [...cart]; n[idx].quantity--; n[idx].quantity < item.min_order ? setCart(cart.filter((_,i)=>i!==idx)) : setCart(n); }} className="w-8 h-8 flex items-center justify-center bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors"><Minus size={14}/></button>
+                                      <span className="text-lg font-black text-[#E11D48] w-6 text-center">{item.quantity}</span>
+                                      <button onClick={() => { const n = [...cart]; n[idx].quantity++; setCart(n); }} className="w-8 h-8 flex items-center justify-center bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors"><Plus size={14}/></button>
+                                  </div>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+                  <div className="p-8 mt-auto">
+                      <div className="bg-zinc-900/50 p-6 rounded-3xl border border-white/5 mb-6">
+                          <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-3 block">FRETE (CEP)</label>
+                          <div className="flex gap-3">
+                              <input placeholder="00000-000" value={cep} onChange={e => setCep(e.target.value)} className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-6 py-4 text-white text-sm outline-none focus:border-[#E11D48] tracking-widest placeholder:text-zinc-600"/>
+                              <button onClick={calculateShipping} className="bg-[#E11D48] px-6 rounded-2xl text-xs font-black uppercase tracking-widest text-white hover:bg-rose-600 transition-colors">OK</button>
+                          </div>
+                          {shippingCost !== null && (
+                            <div className="mt-3 text-right">
+                                <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Valor: {formatCurrency(shippingCost)}</span>
+                            </div>
+                          )}
+                      </div>
+                      
+                      <div className="flex justify-between items-end mb-8 px-2">
+                          <span className="text-sm font-black text-white uppercase tracking-widest">TOTAL</span>
+                          <span className="text-3xl font-black text-[#E11D48] tracking-tight">{formatCurrency(cart.reduce((a,b)=>a+b.price*b.quantity,0) + (shippingCost || 0))}</span>
+                      </div>
+                      
+                      <div className="space-y-4">
+                          <button onClick={() => { if(shippingCost===null) return showToast("Calcule o frete", "error"); setIsCartOpen(false); setIsPaymentOpen(true); }} className="w-full bg-[#E11D48] hover:bg-rose-600 text-white py-5 rounded-3xl font-black uppercase text-xs tracking-[0.2em] shadow-lg shadow-rose-900/20 transition-all hover:scale-[1.02] flex items-center justify-center gap-3">
+                              <QrCode size={18}/> PAGAR PIX
+                          </button>
+                          <button onClick={handleWhatsAppQuote} className="w-full bg-zinc-900 border border-white/10 hover:bg-zinc-800 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-[0.15em] transition-all hover:border-white/20">
+                              ORÇAMENTO / DÚVIDAS VIA WHATSAPP
+                          </button>
+                      </div>
+                  </div>
+              </motion.div>
+          )}
+       </AnimatePresence>
+
+       {/* Payment Modal */}
+       {isPaymentOpen && (
+           <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-6 backdrop-blur-xl">
+               <div className="bg-zinc-950 border border-white/10 rounded-[48px] max-w-md w-full p-12 text-center relative overflow-hidden shadow-2xl">
+                   <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#E11D48] via-purple-500 to-indigo-500"></div>
+                   <QrCode size={64} className="text-[#E11D48] mx-auto mb-8 drop-shadow-[0_0_15px_rgba(225,29,72,0.5)]"/>
+                   <h2 className="text-3xl font-black uppercase text-white mb-3">Pagamento PIX</h2>
+                   <p className="text-zinc-500 text-xs mb-10 font-bold uppercase tracking-widest">Escaneie o QR Code abaixo para concluir</p>
+                   <div className="bg-white p-6 rounded-[32px] mb-10 mx-auto w-fit shadow-xl">
+                       <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getPixCode())}`} className="w-48 h-48"/>
+                   </div>
+                   <button onClick={() => { navigator.clipboard.writeText(getPixCode()); showToast("Copiado!"); }} className="w-full bg-zinc-900 text-zinc-300 py-5 rounded-2xl font-bold uppercase text-xs tracking-[0.15em] hover:text-white mb-4 flex items-center justify-center gap-3 border border-white/5 hover:bg-zinc-800 transition-colors"><Copy size={16}/> Copiar Código Pix</button>
+                   <button onClick={handleFinalize} className="w-full bg-[#E11D48] text-white py-5 rounded-2xl font-black uppercase text-xs tracking-[0.15em] hover:bg-rose-600 shadow-lg shadow-rose-900/30 transition-transform hover:scale-[1.02]">Confirmar Pagamento</button>
+                   <button onClick={() => setIsPaymentOpen(false)} className="mt-8 text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] hover:text-white transition-colors">Cancelar Operação</button>
+               </div>
+           </div>
+       )}
+
+       {/* Success Modal */}
+       {isOrderSuccessOpen && (
+           <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 backdrop-blur-md">
+              <motion.div initial={{scale:0.9, opacity:0}} animate={{scale:1, opacity:1}} className="bg-zinc-950 border border-[#E11D48]/30 rounded-[56px] max-w-md w-full p-16 text-center relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-b from-[#E11D48]/10 to-transparent pointer-events-none"></div>
+                  <div className="w-24 h-24 bg-[#E11D48] rounded-full flex items-center justify-center mx-auto mb-8 text-white shadow-2xl shadow-rose-500/50">
+                      <CheckCircle2 size={48}/>
+                  </div>
+                  <h2 className="text-3xl font-black uppercase text-white mb-6">Pedido Recebido!</h2>
+                  <p className="text-zinc-500 text-sm mb-10 leading-relaxed font-medium">Seu pedido foi enviado para validação da central. Você será notificado assim que a produção iniciar.</p>
+                  <button onClick={() => setIsOrderSuccessOpen(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs tracking-[0.2em] hover:bg-zinc-200 transition-transform hover:scale-[1.02] shadow-xl">Voltar a Loja</button>
+              </motion.div>
+           </div>
+       )}
+    </div>
+  );
 }
