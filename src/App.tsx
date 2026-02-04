@@ -3,7 +3,7 @@ import {
   ShoppingCart, LogOut, Plus, X, CheckCircle2, AlertCircle, 
   ShieldCheck, Package, Trash2, Image as ImageIcon, QrCode, Minus, Copy, 
   Search, Factory, Users as UsersIcon, Bell, 
-  LayoutGrid, List, History, Wallet, TrendingUp, PlusCircle, Tag, Check, ChevronDown, ChevronRight, Clock, MessageCircle, Filter
+  LayoutGrid, List, History, Wallet, TrendingUp, PlusCircle, Tag, Check, ChevronDown, ChevronRight, Clock, MessageCircle, Filter, MapPin, Phone, Building2, Mail, User as UserIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Product, CartItem, Size, User as UserType } from '../types';
@@ -116,6 +116,7 @@ export default function App() {
   const [historyFilter, setHistoryFilter] = useState('TODOS');
   const [productFilter, setProductFilter] = useState('TODOS'); 
   const [expandedHistoryOrder, setExpandedHistoryOrder] = useState<string | null>(null);
+  const [selectedUserForModal, setSelectedUserForModal] = useState<any | null>(null);
 
   // Data
   const [products, setProducts] = useState<Product[]>([]);
@@ -972,7 +973,11 @@ export default function App() {
                      <h3 className="flex items-center gap-3 text-2xl font-black uppercase text-white mb-8"><UsersIcon className="text-[#E11D48]" size={28}/> Controle de Acessos</h3>
                      <div className="space-y-4">
                          {usersList.map(u => (
-                             <div key={u.id} className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 flex items-center justify-between group hover:border-white/10 transition-colors hover:bg-zinc-900/50">
+                             <div 
+                                key={u.id} 
+                                onClick={() => setSelectedUserForModal(u)}
+                                className="bg-zinc-900/30 border border-white/5 rounded-[32px] p-6 flex items-center justify-between group hover:border-white/10 transition-colors hover:bg-zinc-900/50 cursor-pointer"
+                             >
                                  <div className="flex items-center gap-8">
                                      <div className="w-16 h-16 bg-rose-900/20 rounded-2xl flex items-center justify-center text-[#E11D48] font-black text-2xl shadow-inner shadow-rose-900/30">
                                          {u.unit_name?.charAt(0) || 'U'}
@@ -989,13 +994,96 @@ export default function App() {
                                      <span className="bg-emerald-900/20 text-emerald-500 border border-emerald-500/20 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.15em]">
                                          {u.role === 'admin' ? 'GESTOR' : 'FRANQUEADO'}
                                      </span>
-                                     <button onClick={() => handleDeleteUser(u.id)} className="w-12 h-12 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-600 hover:text-rose-500 hover:bg-rose-900/20 transition-all border border-white/5 hover:border-rose-500/30">
+                                     <button 
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteUser(u.id); }} 
+                                        className="w-12 h-12 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-600 hover:text-rose-500 hover:bg-rose-900/20 transition-all border border-white/5 hover:border-rose-500/30"
+                                     >
                                          <Trash2 size={20} />
                                      </button>
                                  </div>
                              </div>
                          ))}
                      </div>
+
+                     {/* Modal de Detalhes do Usuário */}
+                     <AnimatePresence>
+                        {selectedUserForModal && (
+                            <div className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
+                                <motion.div initial={{opacity: 0, scale: 0.95}} animate={{opacity: 1, scale: 1}} exit={{opacity: 0, scale: 0.95}} className="bg-zinc-950 border border-white/10 rounded-[40px] max-w-2xl w-full p-8 relative overflow-hidden flex flex-col max-h-[90vh]">
+                                    <div className="flex justify-between items-start mb-8 pb-6 border-b border-white/5">
+                                        <div>
+                                            <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-1">{selectedUserForModal.unit_name}</h2>
+                                            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{selectedUserForModal.network_tag}</p>
+                                        </div>
+                                        <button onClick={() => setSelectedUserForModal(null)} className="p-2 bg-zinc-900 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"><X size={20}/></button>
+                                    </div>
+
+                                    <div className="overflow-y-auto pr-2 custom-scrollbar">
+                                        {/* Seção 1: Dados Cadastrais */}
+                                        <div className="mb-8">
+                                            <h3 className="text-[10px] font-black uppercase text-zinc-500 tracking-[0.2em] mb-4 flex items-center gap-2"><UserIcon size={14}/> Dados Cadastrais</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5">
+                                                    <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider mb-1">CNPJ</p>
+                                                    <p className="text-sm font-bold text-white flex items-center gap-2"><Building2 size={14} className="text-[#E11D48]"/> {selectedUserForModal.cnpj || 'Não informado'}</p>
+                                                </div>
+                                                <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5">
+                                                    <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Responsável</p>
+                                                    <p className="text-sm font-bold text-white">{selectedUserForModal.contact_name || 'Não informado'}</p>
+                                                </div>
+                                                <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5">
+                                                    <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Contato</p>
+                                                    <p className="text-sm font-bold text-white flex items-center gap-2"><Phone size={14} className="text-[#E11D48]"/> {selectedUserForModal.phone || '---'}</p>
+                                                </div>
+                                                <div className="bg-zinc-900/50 p-4 rounded-2xl border border-white/5">
+                                                    <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider mb-1">E-mail</p>
+                                                    <p className="text-sm font-bold text-white flex items-center gap-2"><Mail size={14} className="text-[#E11D48]"/> {selectedUserForModal.email}</p>
+                                                </div>
+                                                <div className="col-span-1 md:col-span-2 bg-zinc-900/50 p-4 rounded-2xl border border-white/5">
+                                                    <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Endereço de Entrega</p>
+                                                    <p className="text-sm font-bold text-white flex items-start gap-2">
+                                                        <MapPin size={14} className="text-[#E11D48] mt-0.5 flex-shrink-0"/> 
+                                                        {selectedUserForModal.address_street 
+                                                            ? `${selectedUserForModal.address_street}, ${selectedUserForModal.address_city || ''} - ${selectedUserForModal.address_state || ''} (${selectedUserForModal.cep || ''})`
+                                                            : 'Endereço não cadastrado'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Seção 2: Histórico Recente */}
+                                        <div>
+                                            <h3 className="text-[10px] font-black uppercase text-zinc-500 tracking-[0.2em] mb-4 flex items-center gap-2"><History size={14}/> Últimos 3 Pedidos</h3>
+                                            <div className="space-y-3">
+                                                {orders.filter(o => o.user_id === selectedUserForModal.id).slice(0, 3).length > 0 ? (
+                                                    orders.filter(o => o.user_id === selectedUserForModal.id)
+                                                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                                    .slice(0, 3)
+                                                    .map(order => (
+                                                        <div key={order.id} className="bg-zinc-900 border border-white/5 p-4 rounded-2xl flex justify-between items-center">
+                                                            <div>
+                                                                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">#{order.id.slice(0,8).toUpperCase()} • {new Date(order.created_at).toLocaleDateString()}</p>
+                                                                <p className={`text-xs font-black uppercase mt-1 ${order.status.includes('RECUSADO') ? 'text-rose-500' : order.status.includes('PRODUZIDO') ? 'text-emerald-500' : 'text-blue-500'}`}>
+                                                                    {order.status}
+                                                                </p>
+                                                            </div>
+                                                            <p className="text-sm font-black text-white">{formatCurrency(order.total_price || 0)}</p>
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <p className="text-zinc-600 text-xs italic text-center py-4 bg-zinc-900/30 rounded-2xl">Nenhum pedido encontrado para este cliente.</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="mt-8 pt-6 border-t border-white/5">
+                                        <button onClick={() => setSelectedUserForModal(null)} className="w-full bg-[#E11D48] text-white font-black uppercase text-xs tracking-[0.2em] py-4 rounded-2xl hover:bg-rose-600 transition-colors shadow-lg shadow-rose-900/20">Fechar Detalhes</button>
+                                    </div>
+                                </motion.div>
+                            </div>
+                        )}
+                     </AnimatePresence>
                  </div>
              )}
          </div>
